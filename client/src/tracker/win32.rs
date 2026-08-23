@@ -10,15 +10,14 @@ pub mod imp {
     use super::ForegroundInfo;
     use std::path::Path;
     use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
-    use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
     use windows::Win32::System::SystemInformation::GetTickCount;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetLastInputInfo, GetWindowTextW, GetWindowThreadProcessId,
-        LASTINPUTINFO,
+        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     };
 
     pub fn get_foreground_window_info() -> Option<ForegroundInfo> {
@@ -90,7 +89,7 @@ pub mod imp {
                 dwTime: 0,
             };
 
-            if GetLastInputInfo(&mut lii).as_bool() {
+            if GetLastInputInfo(&mut lii).is_ok() {
                 let current_tick = GetTickCount();
                 if current_tick >= lii.dwTime {
                     let diff_ms = current_tick - lii.dwTime;

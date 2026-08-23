@@ -5,8 +5,10 @@ use tracing::{error, info, warn};
 mod win_enforce {
     use std::process::Command;
     use tracing::{error, info};
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::System::Shutdown::{ExitWindowsEx, EWX_FORCE, EWX_LOGOFF, SHUTDOWN_FLAGS};
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Shutdown::{
+        ExitWindowsEx, EWX_FORCE, EWX_LOGOFF, EXIT_WINDOWS_FLAGS, SHUTDOWN_REASON,
+    };
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
     pub fn kill_process_pid(pid: u32, exe_name: &str) -> bool {
@@ -59,8 +61,8 @@ mod win_enforce {
         info!("Executing immediate Windows session logoff...");
         unsafe {
             let _ = ExitWindowsEx(
-                SHUTDOWN_FLAGS(EWX_LOGOFF.0 | EWX_FORCE.0),
-                0,
+                EXIT_WINDOWS_FLAGS(EWX_LOGOFF.0 | EWX_FORCE.0),
+                SHUTDOWN_REASON(0),
             );
         }
 

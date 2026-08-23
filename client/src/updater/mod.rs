@@ -1,9 +1,8 @@
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
-use tracing::{error, info};
+use tracing::info;
 
 pub async fn perform_self_update(download_url: &str, expected_sha256: &str) -> Result<(), String> {
     info!("Starting self-update from: {}", download_url);
