@@ -89,7 +89,7 @@ pub mod imp {
                 dwTime: 0,
             };
 
-            if GetLastInputInfo(&mut lii).is_ok() {
+            if GetLastInputInfo(&mut lii).as_bool() {
                 let current_tick = GetTickCount();
                 if current_tick >= lii.dwTime {
                     let diff_ms = current_tick - lii.dwTime;

@@ -1,6 +1,3 @@
-use std::process::Command;
-use tracing::{error, info, warn};
-
 #[cfg(windows)]
 mod win_enforce {
     use std::process::Command;
