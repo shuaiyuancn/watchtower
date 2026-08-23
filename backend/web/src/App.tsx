@@ -127,9 +127,13 @@ export default function App() {
       try {
         const data = JSON.parse(evt.data);
         if (data.type === 'INIT_STATE') {
-          setDevices(data.devices || []);
-          if (data.devices?.length > 0 && !data.devices.find((d: DeviceEntry) => d.deviceId === selectedDeviceId)) {
-            setSelectedDeviceId(data.devices[0].deviceId);
+          const list: DeviceEntry[] = data.devices || [];
+          setDevices(list);
+          if (list.length > 0) {
+            setSelectedDeviceId((curr) => {
+              const match = list.find((d) => d.deviceId === curr);
+              return match ? curr : list[0].deviceId;
+            });
           }
           if (data.recentTelemetry) {
             setTelemetry(data.recentTelemetry);
@@ -154,6 +158,12 @@ export default function App() {
               }];
             }
           });
+          setSelectedDeviceId((curr) => {
+            if (curr === 'windows-pc' && data.deviceId !== 'windows-pc') {
+              return data.deviceId;
+            }
+            return curr;
+          });
         } else if (data.type === 'POLICY_UPDATED') {
           setDevices((prev) => {
             const idx = prev.findIndex((d) => d.deviceId === data.policy.deviceId);
@@ -169,14 +179,14 @@ export default function App() {
         } else if (data.type === 'DEVICE_DISCONNECTED') {
           setDevices((prev) =>
             prev.map((d) =>
-              d.deviceId === data.deviceId && d.session
-                ? { ...d, session: { ...d.session, connected: false } }
+              d.deviceId === data.deviceId
+                ? { ...d, session: d.session ? { ...d.session, connected: false } : undefined }
                 : d
             )
           );
         }
-      } catch (e) {
-        console.error('Error parsing WS message:', e);
+      } catch (err) {
+        console.error('Error parsing WS message:', err);
       }
     };
 
@@ -190,7 +200,13 @@ export default function App() {
     fetch('/api/devices')
       .then((r) => r.json())
       .then((d) => {
-        if (d.devices) setDevices(d.devices);
+        if (d.devices && d.devices.length > 0) {
+          setDevices(d.devices);
+          setSelectedDeviceId((curr) => {
+            const match = d.devices.find((dev: DeviceEntry) => dev.deviceId === curr);
+            return match ? curr : d.devices[0].deviceId;
+          });
+        }
       })
       .catch(() => {});
 
@@ -389,6 +405,21 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Device Selector */}
+            {devices.length > 0 && (
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                className="bg-slate-800/80 border border-slate-700/80 text-slate-200 text-xs rounded-xl px-3 py-1.5 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                {devices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId} className="bg-slate-900 text-slate-200">
+                    🖥️ {d.deviceId} {d.session?.connected ? '● (Online)' : '(Offline)'}
+                  </option>
+                ))}
+              </select>
+            )}
+
             {/* Live connection badge */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/70 border border-slate-700/60 text-xs">
               <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />

