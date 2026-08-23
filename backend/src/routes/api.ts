@@ -170,7 +170,7 @@ $binArg = "--config \`"$ConfigPath\`""
 schtasks.exe /create /tn $TaskName /tr "\`"$BinaryPath\`" $binArg" /sc onlogon /rl highest /f | Out-Null
 
 # 6. Immediately launch the process in background for the current user session
-Start-Process -FilePath $BinaryPath -ArgumentList $binArg -WindowStyle Hidden
+Start-Process -FilePath $BinaryPath -ArgumentList @("--config", $ConfigPath) -WindowStyle Hidden
 
 Write-Host " Watchtower Client successfully installed, running in background, and monitoring!" -ForegroundColor Green
 `;
