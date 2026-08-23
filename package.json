@@ -1,0 +1,23 @@
+{
+  "name": "watchtower",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows 11 Screen Time & Parental Control Ecosystem",
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --prefix backend",
+    "build:backend": "npm run build --prefix backend",
+    "start": "npm run start --prefix backend",
+    "test:backend": "npm run test --prefix backend"
+  },
+  "keywords": [
+    "screen-time",
+    "parental-control",
+    "windows11",
+    "railway"
+  ],
+  "author": "",
+  "license": "MIT"
+}

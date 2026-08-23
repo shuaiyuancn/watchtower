@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  watchtower-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: watchtower-server
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+    volumes:
+      - watchtower-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  watchtower-data:
