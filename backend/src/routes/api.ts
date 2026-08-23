@@ -166,11 +166,26 @@ try {
 } catch {}
 
 # Method B: Scheduled Task at user logon (Interactive highest privilege)
-$binArg = "--config \`"$ConfigPath\`""
-schtasks.exe /create /tn $TaskName /tr "\`"$BinaryPath\`" $binArg" /sc onlogon /rl highest /f | Out-Null
+$binCommand = "\`"$BinaryPath\`" --config \`"$ConfigPath\`""
+try {
+    schtasks.exe /create /tn $TaskName /tr $binCommand /sc onlogon /rl highest /f 2>$null | Out-Null
+} catch {}
+if ($LASTEXITCODE -ne 0) {
+    try {
+        schtasks.exe /create /tn $TaskName /tr $binCommand /sc onlogon /f 2>$null | Out-Null
+    } catch {}
+}
 
 # 6. Immediately launch the process in background for the current user session
-Start-Process -FilePath $BinaryPath -ArgumentList @("--config", $ConfigPath) -WindowStyle Hidden
+try {
+    schtasks.exe /run /tn $TaskName 2>$null | Out-Null
+} catch {}
+
+Start-Sleep -Milliseconds 300
+$proc = Get-Process -Name "watchtower" -ErrorAction SilentlyContinue
+if (-not $proc) {
+    Start-Process -FilePath $BinaryPath -ArgumentList @("--config", $ConfigPath) -WindowStyle Hidden
+}
 
 Write-Host " Watchtower Client successfully installed, running in background, and monitoring!" -ForegroundColor Green
 `;
