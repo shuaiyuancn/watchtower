@@ -1,12 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { 
   DevicePolicy, 
   DailyUsageSummary, 
   ActiveSession, 
-  TelemetryEvent,
-  ClientHeartbeatPayload,
-  EnforcementDecision
+  TelemetryEvent, 
+  ClientHeartbeatPayload, 
+  EnforcementDecision 
 } from '../types.js';
 import { 
   DEFAULT_APP_RULES, 
@@ -14,26 +15,205 @@ import {
   resolveAppCategory 
 } from './rules.js';
 
-export interface AppDatabase {
-  policies: Record<string, DevicePolicy>;
-  dailyUsage: Record<string, DailyUsageSummary>; // key: `${deviceId}_${YYYY-MM-DD}`
-  telemetry: TelemetryEvent[];
+export interface AppDatabaseLegacy {
+  policies?: Record<string, DevicePolicy>;
+  dailyUsage?: Record<string, DailyUsageSummary>;
+  telemetry?: TelemetryEvent[];
 }
 
 export class WatchtowerStore {
-  private dataFilePath: string;
+  private db: DatabaseSync;
   private policies: Map<string, DevicePolicy> = new Map();
   private dailyUsage: Map<string, DailyUsageSummary> = new Map();
   private activeSessions: Map<string, ActiveSession> = new Map();
   private telemetryLogs: TelemetryEvent[] = [];
+
+  private stmtUpsertPolicy!: StatementSync;
+  private stmtUpsertDailyUsage!: StatementSync;
+  private stmtInsertTelemetry!: StatementSync;
 
   constructor(storageDir?: string) {
     const dir = storageDir || process.env.DATA_DIR || path.join(process.cwd(), 'data');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    this.dataFilePath = path.join(dir, 'watchtower_data.json');
-    this.load();
+
+    const dbPath = path.join(dir, 'watchtower.db');
+    this.db = new DatabaseSync(dbPath);
+
+    // Performance & concurrency optimizations
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA busy_timeout = 5000;
+    `);
+
+    this.initTables();
+    this.initStatements();
+    this.migrateFromJsonIfNeeded(dir);
+    this.loadFromDb();
+  }
+
+  private initTables(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS policies (
+        device_id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS daily_usage (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        total_active_seconds INTEGER NOT NULL DEFAULT 0,
+        category_seconds TEXT NOT NULL,
+        app_seconds TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_daily_usage_device_date ON daily_usage(device_id, date);
+
+      CREATE TABLE IF NOT EXISTS telemetry_events (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_telemetry_device_time ON telemetry_events(device_id, timestamp);
+    `);
+  }
+
+  private initStatements(): void {
+    this.stmtUpsertPolicy = this.db.prepare(`
+      INSERT INTO policies (device_id, data, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET
+        data = excluded.data,
+        updated_at = excluded.updated_at;
+    `);
+
+    this.stmtUpsertDailyUsage = this.db.prepare(`
+      INSERT INTO daily_usage (id, device_id, date, total_active_seconds, category_seconds, app_seconds, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        total_active_seconds = excluded.total_active_seconds,
+        category_seconds = excluded.category_seconds,
+        app_seconds = excluded.app_seconds,
+        updated_at = excluded.updated_at;
+    `);
+
+    this.stmtInsertTelemetry = this.db.prepare(`
+      INSERT INTO telemetry_events (id, device_id, type, timestamp, data)
+      VALUES (?, ?, ?, ?, ?);
+    `);
+  }
+
+  private migrateFromJsonIfNeeded(dir: string): void {
+    const jsonPath = path.join(dir, 'watchtower_data.json');
+    if (!fs.existsSync(jsonPath)) return;
+
+    const countRow = this.db.prepare('SELECT COUNT(*) as count FROM policies;').get() as { count: number };
+    if (countRow && countRow.count > 0) return;
+
+    try {
+      const raw = fs.readFileSync(jsonPath, 'utf-8');
+      const parsed: AppDatabaseLegacy = JSON.parse(raw);
+      const now = new Date().toISOString();
+
+      if (parsed.policies) {
+        for (const policy of Object.values(parsed.policies)) {
+          this.stmtUpsertPolicy.run(policy.deviceId, JSON.stringify(policy), now);
+        }
+      }
+
+      if (parsed.dailyUsage) {
+        for (const usage of Object.values(parsed.dailyUsage)) {
+          const key = this.getUsageKey(usage.deviceId, usage.date);
+          this.stmtUpsertDailyUsage.run(
+            key,
+            usage.deviceId,
+            usage.date,
+            usage.totalActiveSeconds,
+            JSON.stringify(usage.categorySeconds || {}),
+            JSON.stringify(usage.appSeconds || {}),
+            now
+          );
+        }
+      }
+
+      if (Array.isArray(parsed.telemetry)) {
+        for (const item of parsed.telemetry) {
+          this.stmtInsertTelemetry.run(
+            item.id,
+            item.deviceId,
+            item.type,
+            item.timestamp,
+            JSON.stringify(item)
+          );
+        }
+      }
+
+      fs.renameSync(jsonPath, `${jsonPath}.migrated`);
+      console.log('Successfully migrated legacy JSON database to SQLite!');
+    } catch (err) {
+      console.error('Failed migrating legacy JSON database to SQLite:', err);
+    }
+  }
+
+  private loadFromDb(): void {
+    // 1. Load policies
+    const policyRows = this.db.prepare('SELECT device_id, data FROM policies;').all() as Array<{
+      device_id: string;
+      data: string;
+    }>;
+    for (const row of policyRows) {
+      try {
+        const policy: DevicePolicy = JSON.parse(row.data);
+        this.policies.set(row.device_id, policy);
+      } catch (e) {
+        console.error('Error parsing policy from SQLite:', e);
+      }
+    }
+
+    // 2. Load today's and recent daily usage
+    const usageRows = this.db.prepare('SELECT id, device_id, date, total_active_seconds, category_seconds, app_seconds FROM daily_usage;').all() as Array<{
+      id: string;
+      device_id: string;
+      date: string;
+      total_active_seconds: number;
+      category_seconds: string;
+      app_seconds: string;
+    }>;
+    for (const row of usageRows) {
+      try {
+        const usage: DailyUsageSummary = {
+          deviceId: row.device_id,
+          date: row.date,
+          totalActiveSeconds: Number(row.total_active_seconds),
+          categorySeconds: JSON.parse(row.category_seconds || '{}'),
+          appSeconds: JSON.parse(row.app_seconds || '{}')
+        };
+        this.dailyUsage.set(row.id, usage);
+      } catch (e) {
+        console.error('Error parsing daily usage from SQLite:', e);
+      }
+    }
+
+    // 3. Load latest telemetry events
+    const telemetryRows = this.db.prepare('SELECT data FROM telemetry_events ORDER BY timestamp DESC LIMIT 500;').all() as Array<{
+      data: string;
+    }>;
+    this.telemetryLogs = [];
+    for (const row of telemetryRows.reverse()) {
+      try {
+        this.telemetryLogs.push(JSON.parse(row.data));
+      } catch (e) {
+        console.error('Error parsing telemetry from SQLite:', e);
+      }
+    }
   }
 
   private getTodayDateString(): string {
@@ -43,43 +223,6 @@ export class WatchtowerStore {
 
   private getUsageKey(deviceId: string, dateStr: string): string {
     return `${deviceId}_${dateStr}`;
-  }
-
-  private load(): void {
-    if (fs.existsSync(this.dataFilePath)) {
-      try {
-        const raw = fs.readFileSync(this.dataFilePath, 'utf-8');
-        const parsed: AppDatabase = JSON.parse(raw);
-        if (parsed.policies) {
-          for (const [k, v] of Object.entries(parsed.policies)) {
-            this.policies.set(k, v);
-          }
-        }
-        if (parsed.dailyUsage) {
-          for (const [k, v] of Object.entries(parsed.dailyUsage)) {
-            this.dailyUsage.set(k, v);
-          }
-        }
-        if (Array.isArray(parsed.telemetry)) {
-          this.telemetryLogs = parsed.telemetry.slice(-500); // keep last 500
-        }
-      } catch (err) {
-        console.error('Failed to load database file, starting fresh:', err);
-      }
-    }
-  }
-
-  public save(): void {
-    try {
-      const db: AppDatabase = {
-        policies: Object.fromEntries(this.policies.entries()),
-        dailyUsage: Object.fromEntries(this.dailyUsage.entries()),
-        telemetry: this.telemetryLogs.slice(-500)
-      };
-      fs.writeFileSync(this.dataFilePath, JSON.stringify(db, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('Failed to save store to file:', err);
-    }
   }
 
   public getPolicy(deviceId: string): DevicePolicy {
@@ -105,15 +248,15 @@ export class WatchtowerStore {
         ],
         appRules: [...DEFAULT_APP_RULES]
       };
-      this.policies.set(deviceId, policy);
-      this.save();
+      this.updatePolicy(policy);
     }
     return policy;
   }
 
   public updatePolicy(policy: DevicePolicy): DevicePolicy {
     this.policies.set(policy.deviceId, policy);
-    this.save();
+    const now = new Date().toISOString();
+    this.stmtUpsertPolicy.run(policy.deviceId, JSON.stringify(policy), now);
     return policy;
   }
 
@@ -140,6 +283,20 @@ export class WatchtowerStore {
       this.dailyUsage.set(key, usage);
     }
     return usage;
+  }
+
+  private persistDailyUsage(usage: DailyUsageSummary): void {
+    const key = this.getUsageKey(usage.deviceId, usage.date);
+    const now = new Date().toISOString();
+    this.stmtUpsertDailyUsage.run(
+      key,
+      usage.deviceId,
+      usage.date,
+      usage.totalActiveSeconds,
+      JSON.stringify(usage.categorySeconds),
+      JSON.stringify(usage.appSeconds),
+      now
+    );
   }
 
   public recordHeartbeat(payload: ClientHeartbeatPayload): {
@@ -177,7 +334,7 @@ export class WatchtowerStore {
     });
 
     const decision = evaluateEnforcement(policy, usage, payload.currentApp);
-    this.save();
+    this.persistDailyUsage(usage);
 
     return { decision, policy, usage };
   }
@@ -205,7 +362,13 @@ export class WatchtowerStore {
     if (this.telemetryLogs.length > 500) {
       this.telemetryLogs = this.telemetryLogs.slice(-500);
     }
-    this.save();
+    this.stmtInsertTelemetry.run(
+      fullEvent.id,
+      fullEvent.deviceId,
+      fullEvent.type,
+      fullEvent.timestamp,
+      JSON.stringify(fullEvent)
+    );
     return fullEvent;
   }
 
@@ -249,5 +412,9 @@ export class WatchtowerStore {
     }
 
     return list;
+  }
+
+  public close(): void {
+    this.db.close();
   }
 }
