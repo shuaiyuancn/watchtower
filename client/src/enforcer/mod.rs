@@ -54,6 +54,18 @@ mod win_enforce {
         }
     }
 
+    pub fn lock_workstation() {
+        info!("Executing immediate Windows workstation lock (preserving open apps/windows)...");
+        unsafe {
+            let _ = windows::Win32::System::Shutdown::LockWorkStation();
+        }
+
+        // Secondary fallback
+        let _ = Command::new("rundll32.exe")
+            .args(["user32.dll,LockWorkStation"])
+            .spawn();
+    }
+
     pub fn force_logoff() {
         info!("Executing immediate Windows session logoff...");
         unsafe {
@@ -84,6 +96,10 @@ mod win_enforce {
         true
     }
 
+    pub fn lock_workstation() {
+        info!("[Mock] Locking workstation");
+    }
+
     pub fn force_logoff() {
         info!("[Mock] Forcing user logoff");
     }
@@ -96,6 +112,10 @@ pub fn kill_target_process(pid: Option<u32>, exe_name: &str) -> bool {
         }
     }
     win_enforce::kill_process_by_name(exe_name)
+}
+
+pub fn execute_lock_workstation() {
+    win_enforce::lock_workstation();
 }
 
 pub fn execute_forced_logoff() {

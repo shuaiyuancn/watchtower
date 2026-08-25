@@ -228,12 +228,12 @@ export default function App() {
     deviceId: selectedDeviceId,
     policy: {
       deviceId: selectedDeviceId,
-      dailyGlobalLimitSeconds: 7200,
+      dailyGlobalLimitSeconds: 86400,
       warningThresholdSeconds: 300,
       emergencyLock: false,
       bonusSecondsToday: 0,
-      bedtime: { enabled: true, startHour: 21, startMinute: 0, endHour: 7, endMinute: 0 },
-      categoryLimits: [{ category: 'Games', dailyLimitSeconds: 3600 }],
+      bedtime: { enabled: false, startHour: 21, startMinute: 0, endHour: 7, endMinute: 0 },
+      categoryLimits: [],
       appRules: []
     },
     usageToday: {
@@ -246,6 +246,9 @@ export default function App() {
   };
 
   const formatSeconds = (sec: number) => {
+    if (sec >= 86400) {
+      return '24h (Unlimited)';
+    }
     const hours = Math.floor(sec / 3600);
     const mins = Math.floor((sec % 3600) / 60);
     if (hours > 0) {
@@ -678,8 +681,8 @@ export default function App() {
               <input
                 type="range"
                 min="0"
-                max="28800"
-                step="900"
+                max="86400"
+                step="1800"
                 value={currentDevice.policy.dailyGlobalLimitSeconds}
                 onChange={(e) => {
                   const updated = {
@@ -691,11 +694,11 @@ export default function App() {
                 className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
               />
               <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>Unlimited (0h)</span>
-                <span>2 Hours</span>
-                <span>4 Hours</span>
+                <span>Off (0h)</span>
                 <span>6 Hours</span>
-                <span>8 Hours</span>
+                <span>12 Hours</span>
+                <span>18 Hours</span>
+                <span>24h (Unlimited)</span>
               </div>
             </div>
 

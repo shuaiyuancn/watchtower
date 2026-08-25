@@ -33,7 +33,9 @@ describe('Watchtower SQLite Store', () => {
   it('creates and persists default policy on first access', () => {
     const policy = store.getPolicy('child-pc');
     expect(policy.deviceId).toBe('child-pc');
-    expect(policy.dailyGlobalLimitSeconds).toBe(7200);
+    expect(policy.dailyGlobalLimitSeconds).toBe(86400);
+    expect(policy.categoryLimits).toEqual([]);
+    expect(policy.bedtime?.enabled).toBe(false);
 
     store.close();
 
@@ -41,7 +43,9 @@ describe('Watchtower SQLite Store', () => {
     const newStore = new WatchtowerStore(tempDir);
     const persisted = newStore.getPolicy('child-pc');
     expect(persisted.deviceId).toBe('child-pc');
-    expect(persisted.dailyGlobalLimitSeconds).toBe(7200);
+    expect(persisted.dailyGlobalLimitSeconds).toBe(86400);
+    expect(persisted.categoryLimits).toEqual([]);
+    expect(persisted.bedtime?.enabled).toBe(false);
     newStore.close();
   });
 

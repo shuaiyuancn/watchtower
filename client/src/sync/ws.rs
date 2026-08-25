@@ -5,7 +5,7 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
 use crate::config::ClientConfig;
-use crate::enforcer::{execute_forced_logoff, kill_target_process};
+use crate::enforcer::{execute_forced_logoff, execute_lock_workstation, kill_target_process};
 use crate::notifier::show_warning_toast;
 use crate::telemetry::{inspect_im_activity, inspect_youtube_activity};
 use crate::tracker::{get_foreground_info, get_idle_time_seconds, ForegroundInfo};
@@ -131,8 +131,8 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
             }
 
             if decision.should_logoff_user {
-                warn!("Enforcement: Daily limit or curfew reached. Logging off user!");
-                execute_forced_logoff();
+                warn!("Enforcement: Daily limit or curfew reached. Locking workstation!");
+                execute_lock_workstation();
             }
         }
 
@@ -141,7 +141,7 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
             match cmd.action.as_str() {
                 "LOCK_NOW" => {
                     show_warning_toast("Watchtower", "PC locked by parent.");
-                    execute_forced_logoff();
+                    execute_lock_workstation();
                 }
                 "KILL_APP" => {
                     if let Some(app) = cmd.target_app {

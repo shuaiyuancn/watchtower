@@ -123,7 +123,7 @@ export function evaluateEnforcement(
       shouldKillApp: true,
       shouldLogoffUser: true,
       shouldWarn: true,
-      warningMessage: 'Daily screen time limit reached! Logging out...',
+      warningMessage: 'Daily screen time limit reached! Locking PC...',
       reason: 'GLOBAL_LIMIT_EXHAUSTED',
       remainingGlobalSeconds: 0
     };

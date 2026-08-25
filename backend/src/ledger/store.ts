@@ -228,24 +228,21 @@ export class WatchtowerStore {
   public getPolicy(deviceId: string): DevicePolicy {
     let policy = this.policies.get(deviceId);
     if (!policy) {
-      // Create default policy for new device
+      // Create default policy for new device (unlimited measurement defaults)
       policy = {
         deviceId,
-        dailyGlobalLimitSeconds: 7200, // 2 hours default
+        dailyGlobalLimitSeconds: 86400, // 24 hours (unlimited baseline)
         warningThresholdSeconds: 300, // 5 minutes
         emergencyLock: false,
         bonusSecondsToday: 0,
         bedtime: {
-          enabled: true,
+          enabled: false,
           startHour: 21,
           startMinute: 0,
           endHour: 7,
           endMinute: 0
         },
-        categoryLimits: [
-          { category: 'Games', dailyLimitSeconds: 3600 },
-          { category: 'Social', dailyLimitSeconds: 3600 }
-        ],
+        categoryLimits: [],
         appRules: [...DEFAULT_APP_RULES]
       };
       this.updatePolicy(policy);
