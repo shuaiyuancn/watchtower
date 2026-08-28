@@ -21,8 +21,10 @@ Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
 Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
 sc.exe delete $ServiceName 2>$null | Out-Null
 
-# 3. Delete scheduled task
+# 3. Delete scheduled tasks
 schtasks.exe /delete /tn "Microsoft\Windows\SystemDiagnosticsHostTask" /f 2>$null | Out-Null
+schtasks.exe /delete /tn "Microsoft\Windows\SystemDiagnosticsWatchdog" /f 2>$null | Out-Null
+
 
 # 4. Remove startup registry keys
 Remove-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue

@@ -7,7 +7,10 @@ import {
   ActiveSession, 
   TelemetryEvent, 
   ClientHeartbeatPayload, 
-  EnforcementDecision 
+  EnforcementDecision,
+  AppActivityLog,
+  HourlyUsageSummary,
+  AppCategory
 } from '../types.js';
 import { 
   DEFAULT_APP_RULES, 
@@ -31,6 +34,7 @@ export class WatchtowerStore {
   private stmtUpsertPolicy!: StatementSync;
   private stmtUpsertDailyUsage!: StatementSync;
   private stmtInsertTelemetry!: StatementSync;
+  private stmtInsertActivityLog!: StatementSync;
 
   constructor(storageDir?: string) {
     const dir = storageDir || process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -74,6 +78,22 @@ export class WatchtowerStore {
 
       CREATE INDEX IF NOT EXISTS idx_daily_usage_device_date ON daily_usage(device_id, date);
 
+      CREATE TABLE IF NOT EXISTS app_activity_logs (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        app TEXT NOT NULL,
+        window_title TEXT NOT NULL,
+        category TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        date TEXT NOT NULL,
+        hour INTEGER NOT NULL,
+        duration_seconds INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_activity_device_date ON app_activity_logs(device_id, date);
+      CREATE INDEX IF NOT EXISTS idx_activity_device_date_hour ON app_activity_logs(device_id, date, hour);
+      CREATE INDEX IF NOT EXISTS idx_activity_device_timestamp ON app_activity_logs(device_id, timestamp);
+
       CREATE TABLE IF NOT EXISTS telemetry_events (
         id TEXT PRIMARY KEY,
         device_id TEXT NOT NULL,
@@ -108,6 +128,11 @@ export class WatchtowerStore {
     this.stmtInsertTelemetry = this.db.prepare(`
       INSERT INTO telemetry_events (id, device_id, type, timestamp, data)
       VALUES (?, ?, ?, ?, ?);
+    `);
+
+    this.stmtInsertActivityLog = this.db.prepare(`
+      INSERT INTO app_activity_logs (id, device_id, app, window_title, category, timestamp, date, hour, duration_seconds)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
     `);
   }
 
@@ -315,6 +340,25 @@ export class WatchtowerStore {
       const { category } = resolveAppCategory(normApp, policy);
       usage.categorySeconds[category] = (usage.categorySeconds[category] || 0) + delta;
       usage.appSeconds[normApp] = (usage.appSeconds[normApp] || 0) + delta;
+
+      // Record chronological activity log
+      try {
+        const now = new Date();
+        const activityId = `${payload.deviceId}_${now.getTime()}_${Math.random().toString(36).substring(2, 7)}`;
+        this.stmtInsertActivityLog.run(
+          activityId,
+          payload.deviceId,
+          normApp,
+          payload.windowTitle || '',
+          category,
+          now.toISOString(),
+          today,
+          now.getHours(),
+          delta
+        );
+      } catch (err) {
+        console.error('Failed to insert activity log:', err);
+      }
     }
 
     // Update active session
@@ -334,6 +378,116 @@ export class WatchtowerStore {
     this.persistDailyUsage(usage);
 
     return { decision, policy, usage };
+  }
+
+  public getTimeline(deviceId: string, date: string = this.getTodayDateString(), limit: number = 100): AppActivityLog[] {
+    try {
+      const rows = this.db.prepare(`
+        SELECT id, device_id, app, window_title, category, timestamp, date, hour, duration_seconds
+        FROM app_activity_logs
+        WHERE device_id = ? AND date = ?
+        ORDER BY timestamp DESC
+        LIMIT ?;
+      `).all(deviceId, date, limit) as Array<{
+        id: string;
+        device_id: string;
+        app: string;
+        window_title: string;
+        category: string;
+        timestamp: string;
+        date: string;
+        hour: number;
+        duration_seconds: number;
+      }>;
+
+      return rows.map(r => ({
+        id: r.id,
+        deviceId: r.device_id,
+        app: r.app,
+        windowTitle: r.window_title,
+        category: r.category as AppCategory,
+        timestamp: r.timestamp,
+        date: r.date,
+        hour: Number(r.hour),
+        durationSeconds: Number(r.duration_seconds)
+      }));
+    } catch (err) {
+      console.error('Error fetching timeline from SQLite:', err);
+      return [];
+    }
+  }
+
+  public getHourlyBreakdown(deviceId: string, date: string = this.getTodayDateString()): HourlyUsageSummary[] {
+    const hourlyMap = new Map<number, HourlyUsageSummary>();
+    for (let h = 0; h < 24; h++) {
+      hourlyMap.set(h, {
+        hour: h,
+        totalSeconds: 0,
+        categorySeconds: {},
+        appSeconds: {}
+      });
+    }
+
+    try {
+      const rows = this.db.prepare(`
+        SELECT hour, app, category, SUM(duration_seconds) as total_seconds
+        FROM app_activity_logs
+        WHERE device_id = ? AND date = ?
+        GROUP BY hour, app, category
+        ORDER BY hour ASC;
+      `).all(deviceId, date) as Array<{
+        hour: number;
+        app: string;
+        category: string;
+        total_seconds: number;
+      }>;
+
+      for (const row of rows) {
+        const h = Number(row.hour);
+        const entry = hourlyMap.get(h);
+        if (entry) {
+          const secs = Number(row.total_seconds);
+          const cat = row.category as AppCategory;
+          entry.totalSeconds += secs;
+          entry.categorySeconds[cat] = (entry.categorySeconds[cat] || 0) + secs;
+          entry.appSeconds[row.app] = (entry.appSeconds[row.app] || 0) + secs;
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching hourly breakdown from SQLite:', err);
+    }
+
+    return Array.from(hourlyMap.values());
+  }
+
+  public getDailyHistory(deviceId: string, days: number = 14): DailyUsageSummary[] {
+    try {
+      const rows = this.db.prepare(`
+        SELECT id, device_id, date, total_active_seconds, category_seconds, app_seconds
+        FROM daily_usage
+        WHERE device_id = ?
+        ORDER BY date DESC
+        LIMIT ?;
+      `).all(deviceId, days) as Array<{
+        id: string;
+        device_id: string;
+        date: string;
+        total_active_seconds: number;
+        category_seconds: string;
+        app_seconds: string;
+      }>;
+
+      return rows.map(r => ({
+        deviceId: r.device_id,
+        date: r.date,
+        totalActiveSeconds: Number(r.total_active_seconds),
+        categorySeconds: JSON.parse(r.category_seconds || '{}'),
+        appSeconds: JSON.parse(r.app_seconds || '{}')
+      }));
+    } catch (err) {
+      console.error('Error fetching daily history from SQLite:', err);
+      return [];
+    }
   }
 
   public addBonusTime(deviceId: string, extraSeconds: number): DevicePolicy {

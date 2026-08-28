@@ -104,3 +104,23 @@ export interface EnforcementDecision {
   remainingAppSeconds?: number;
   remainingGlobalSeconds?: number;
 }
+
+export interface AppActivityLog {
+  id: string;
+  deviceId: string;
+  app: string;
+  windowTitle: string;
+  category: AppCategory;
+  timestamp: string; // ISO 8601
+  date: string; // YYYY-MM-DD
+  hour: number; // 0..23
+  durationSeconds: number;
+}
+
+export interface HourlyUsageSummary {
+  hour: number; // 0..23
+  totalSeconds: number;
+  categorySeconds: Partial<Record<AppCategory, number>>;
+  appSeconds: Record<string, number>;
+}
+

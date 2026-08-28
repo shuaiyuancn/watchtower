@@ -183,4 +183,58 @@ describe('Watchtower SQLite Store', () => {
       fs.rmSync(legacyDir, { recursive: true, force: true });
     } catch {}
   });
+
+  it('records timeline events and retrieves hourly breakdown', () => {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Record heartbeats for Chrome and VS Code
+    store.recordHeartbeat({
+      deviceId: 'child-pc',
+      hostname: 'child-pc-host',
+      currentApp: 'chrome.exe',
+      windowTitle: 'Google Search',
+      isIdle: false,
+      idleSeconds: 0,
+      elapsedActiveDeltaSeconds: 30
+    });
+
+    store.recordHeartbeat({
+      deviceId: 'child-pc',
+      hostname: 'child-pc-host',
+      currentApp: 'Code.exe',
+      windowTitle: 'store.ts - watchtower',
+      isIdle: false,
+      idleSeconds: 0,
+      elapsedActiveDeltaSeconds: 20
+    });
+
+    // 1. Test getTimeline
+    const timeline = store.getTimeline('child-pc', today);
+    expect(timeline.length).toBe(2);
+    expect(timeline[0].app).toBe('code.exe');
+    expect(timeline[0].windowTitle).toBe('store.ts - watchtower');
+    expect(timeline[0].category).toBe('Productivity');
+    expect(timeline[0].durationSeconds).toBe(20);
+
+    expect(timeline[1].app).toBe('chrome.exe');
+    expect(timeline[1].category).toBe('Browsers');
+    expect(timeline[1].durationSeconds).toBe(30);
+
+    // 2. Test getHourlyBreakdown
+    const hourly = store.getHourlyBreakdown('child-pc', today);
+    expect(hourly.length).toBe(24);
+    const currentHour = new Date().getHours();
+    const currentBucket = hourly[currentHour];
+    expect(currentBucket.totalSeconds).toBe(50);
+    expect(currentBucket.categorySeconds['Browsers']).toBe(30);
+    expect(currentBucket.categorySeconds['Productivity']).toBe(20);
+    expect(currentBucket.appSeconds['chrome.exe']).toBe(30);
+    expect(currentBucket.appSeconds['code.exe']).toBe(20);
+
+    // 3. Test getDailyHistory
+    const history = store.getDailyHistory('child-pc', 7);
+    expect(history.length).toBeGreaterThanOrEqual(1);
+    expect(history[0].totalActiveSeconds).toBe(50);
+  });
 });
+

@@ -14,7 +14,7 @@ describe('Watchtower Rules Engine', () => {
     emergencyLock: false,
     bonusSecondsToday: 0,
     bedtime: {
-      enabled: true,
+      enabled: false,
       startHour: 21,
       startMinute: 0,
       endHour: 7,
@@ -109,13 +109,24 @@ describe('Watchtower Rules Engine', () => {
   });
 
   it('enforces bedtime schedule lock', () => {
+    const bedtimePolicy: DevicePolicy = {
+      ...mockPolicy,
+      bedtime: {
+        enabled: true,
+        startHour: 21,
+        startMinute: 0,
+        endHour: 7,
+        endMinute: 0
+      }
+    };
+
     const nightTime = new Date('2026-08-23T22:30:00'); // 10:30 PM
-    expect(isBedtimeActive(mockPolicy, nightTime)).toBe(true);
+    expect(isBedtimeActive(bedtimePolicy, nightTime)).toBe(true);
 
     const dayTime = new Date('2026-08-23T14:00:00'); // 2:00 PM
-    expect(isBedtimeActive(mockPolicy, dayTime)).toBe(false);
+    expect(isBedtimeActive(bedtimePolicy, dayTime)).toBe(false);
 
-    const decision = evaluateEnforcement(mockPolicy, emptyUsage, 'chrome.exe', nightTime);
+    const decision = evaluateEnforcement(bedtimePolicy, emptyUsage, 'chrome.exe', nightTime);
     expect(decision.shouldKillApp).toBe(true);
     expect(decision.shouldLogoffUser).toBe(true);
     expect(decision.reason).toBe('BEDTIME_CURFEW');

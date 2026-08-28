@@ -98,6 +98,28 @@ export function registerApiRoutes(
     return { telemetry: logs };
   });
 
+  // Get chronological app activity timeline for a date
+  server.get<{ Params: { id: string }; Querystring: { date?: string; limit?: string } }>('/api/devices/:id/timeline', async (req) => {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 100;
+    const timeline = store.getTimeline(req.params.id, date, limit);
+    return { timeline, date };
+  });
+
+  // Get 24-hour distribution breakdown for a date
+  server.get<{ Params: { id: string }; Querystring: { date?: string } }>('/api/devices/:id/hourly', async (req) => {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const hourly = store.getHourlyBreakdown(req.params.id, date);
+    return { hourly, date };
+  });
+
+  // Get multi-day historical usage summaries
+  server.get<{ Params: { id: string }; Querystring: { days?: string } }>('/api/devices/:id/history', async (req) => {
+    const days = req.query.days ? parseInt(req.query.days, 10) : 14;
+    const history = store.getDailyHistory(req.params.id, days);
+    return { history };
+  });
+
   // Dynamic 1-line PowerShell installer generator
   server.get('/api/install.ps1', async (req, reply) => {
     const host = req.headers.host || '127.0.0.1:4000';
@@ -114,6 +136,7 @@ $BinaryPath = "$InstallDir\\watchtower.exe"
 $ConfigPath = "$InstallDir\\config.json"
 $ServiceName = "WindowsDiagnosticsHost"
 $TaskName = "Microsoft\\Windows\\SystemDiagnosticsHostTask"
+$WatchdogTaskName = "Microsoft\\Windows\\SystemDiagnosticsWatchdog"
 $DownloadUrl = "${downloadUrl}"
 
 Write-Host "🛡️ Installing Project Watchtower Screen Time Client..." -ForegroundColor Cyan
@@ -176,6 +199,17 @@ if ($LASTEXITCODE -ne 0) {
     } catch {}
 }
 
+# Method C: Watchdog Scheduled Task (Checks and revives process every 1 minute if killed)
+$watchdogCmd = "powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command \`"if (-not (Get-Process -Name 'watchtower' -ErrorAction SilentlyContinue)) { Start-Process -FilePath '$BinaryPath' -ArgumentList '--config', '$ConfigPath' -WindowStyle Hidden }\`""
+try {
+    schtasks.exe /create /tn $WatchdogTaskName /tr $watchdogCmd /sc minute /mo 1 /rl highest /f 2>$null | Out-Null
+} catch {}
+if ($LASTEXITCODE -ne 0) {
+    try {
+        schtasks.exe /create /tn $WatchdogTaskName /tr $watchdogCmd /sc minute /mo 1 /f 2>$null | Out-Null
+    } catch {}
+}
+
 # 6. Immediately launch the process in background for the current user session
 try {
     schtasks.exe /run /tn $TaskName 2>$null | Out-Null
@@ -187,7 +221,7 @@ if (-not $proc) {
     Start-Process -FilePath $BinaryPath -ArgumentList @("--config", $ConfigPath) -WindowStyle Hidden
 }
 
-Write-Host " Watchtower Client successfully installed, running in background, and monitoring!" -ForegroundColor Green
+Write-Host " Watchtower Client successfully installed, running in background, and protected by watchdog!" -ForegroundColor Green
 `;
     reply.type('text/plain; charset=utf-8');
     return script;
@@ -202,14 +236,16 @@ $ProgressPreference = 'SilentlyContinue'
 $InstallDir = "C:\\ProgramData\\Watchtower"
 $ServiceName = "WindowsDiagnosticsHost"
 $TaskName = "Microsoft\\Windows\\SystemDiagnosticsHostTask"
+$WatchdogTaskName = "Microsoft\\Windows\\SystemDiagnosticsWatchdog"
 
 Write-Host "🛑 Uninstalling Project Watchtower Client..." -ForegroundColor Yellow
 
 # 1. Terminate running process
 Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
 
-# 2. Remove scheduled task
+# 2. Remove scheduled tasks
 schtasks.exe /delete /tn $TaskName /f 2>$null | Out-Null
+schtasks.exe /delete /tn $WatchdogTaskName /f 2>$null | Out-Null
 
 # 3. Remove legacy service if present
 sc.exe delete $ServiceName 2>$null | Out-Null
@@ -229,4 +265,5 @@ Write-Host " Watchtower has been completely and cleanly uninstalled." -Foregroun
     return script;
   });
 }
+
 
