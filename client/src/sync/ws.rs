@@ -5,7 +5,7 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
 use crate::config::ClientConfig;
-use crate::enforcer::{execute_forced_logoff, execute_lock_workstation, kill_target_process};
+use crate::enforcer::{execute_lock_workstation, kill_target_process};
 use crate::notifier::show_warning_toast;
 use crate::telemetry::{inspect_im_activity, inspect_youtube_activity};
 use crate::tracker::{get_foreground_info, get_idle_time_seconds, ForegroundInfo};
