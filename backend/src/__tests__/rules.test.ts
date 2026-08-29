@@ -48,6 +48,7 @@ describe('Watchtower Rules Engine', () => {
 
   it('correctly categorizes known applications', () => {
     expect(resolveAppCategory('chrome.exe', mockPolicy).category).toBe('Browsers');
+    expect(resolveAppCategory('zen.exe', mockPolicy).category).toBe('Browsers');
     expect(resolveAppCategory('RobloxPlayerBeta.exe', mockPolicy).category).toBe('Games');
     expect(resolveAppCategory('unknown_custom_tool.exe', mockPolicy).category).toBe('Other');
   });

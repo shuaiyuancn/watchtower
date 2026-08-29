@@ -25,6 +25,10 @@ export const DEFAULT_APP_RULES: AppRule[] = [
   { executableName: 'msedge.exe', displayName: 'Microsoft Edge', category: 'Browsers' },
   { executableName: 'firefox.exe', displayName: 'Mozilla Firefox', category: 'Browsers' },
   { executableName: 'brave.exe', displayName: 'Brave Browser', category: 'Browsers' },
+  { executableName: 'zen.exe', displayName: 'Zen Browser', category: 'Browsers' },
+  { executableName: 'opera.exe', displayName: 'Opera', category: 'Browsers' },
+  { executableName: 'vivaldi.exe', displayName: 'Vivaldi', category: 'Browsers' },
+  { executableName: 'arc.exe', displayName: 'Arc Browser', category: 'Browsers' },
   
   // Social & IM
   { executableName: 'Discord.exe', displayName: 'Discord', category: 'Social' },
