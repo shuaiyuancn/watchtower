@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { WatchtowerStore } from '../ledger/store.js';
 import { WebSocketHub } from '../ws/hub.js';
 import { DevicePolicy } from '../types.js';
@@ -8,9 +8,76 @@ export function registerApiRoutes(
   store: WatchtowerStore,
   wsHub: WebSocketHub
 ): void {
+  function extractToken(req: FastifyRequest): string {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      return authHeader.substring(7).trim();
+    }
+    if (req.headers['x-auth-token']) {
+      return String(req.headers['x-auth-token']).trim();
+    }
+    const query = (req.query as Record<string, string> | undefined);
+    if (query?.token) {
+      return String(query.token).trim();
+    }
+    return '';
+  }
+
+  // Hook to protect /api/devices/* routes
+  server.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
+    const url = req.raw.url || '';
+    if (url.startsWith('/api/devices')) {
+      const token = extractToken(req);
+      if (!token || !store.verifySessionToken(token)) {
+        return reply.code(401).send({ error: 'Unauthorized. Please unlock the dashboard with your password.' });
+      }
+    }
+  });
+
   // Health check
   server.get('/api/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString(), app: 'watchtower' };
+  });
+
+  // Dashboard Authentication Endpoints
+  server.post<{ Body: { password: string } }>('/api/auth/login', async (req, reply) => {
+    const { password } = req.body || {};
+    if (!password && password !== '') {
+      return reply.code(400).send({ success: false, error: 'Password is required' });
+    }
+
+    const isValid = store.verifyPassword(password);
+    if (!isValid) {
+      return reply.code(401).send({ success: false, error: 'Incorrect password. Default is 0000.' });
+    }
+
+    const token = store.createSessionToken();
+    return { success: true, token };
+  });
+
+  server.get('/api/auth/status', async (req) => {
+    const token = extractToken(req);
+    const authenticated = Boolean(token && store.verifySessionToken(token));
+    return { authenticated };
+  });
+
+  server.post<{ Body: { currentPassword: string; newPassword: string } }>('/api/auth/change-password', async (req, reply) => {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return reply.code(400).send({ success: false, error: 'Current password and new password are required' });
+    }
+
+    if (!store.verifyPassword(currentPassword)) {
+      return reply.code(401).send({ success: false, error: 'Current password is incorrect' });
+    }
+
+    if (newPassword.length < 1) {
+      return reply.code(400).send({ success: false, error: 'New password cannot be empty' });
+    }
+
+    store.setPassword(newPassword);
+    const newToken = store.createSessionToken();
+    return { success: true, token: newToken, message: 'Password successfully updated' };
   });
 
   // Get all registered devices & summaries

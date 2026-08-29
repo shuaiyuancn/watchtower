@@ -41,7 +41,12 @@ export async function createServer() {
   });
 
   // WebSocket for Parent Web Dashboard
-  app.get('/ws/dashboard', { websocket: true }, (socket) => {
+  app.get<{ Querystring: { token?: string } }>('/ws/dashboard', { websocket: true }, (socket, req) => {
+    const token = req.query?.token || (req.headers['sec-websocket-protocol'] as string) || '';
+    if (!store.verifySessionToken(token)) {
+      socket.close(4001, 'Unauthorized');
+      return;
+    }
     wsHub.registerDashboard(socket);
   });
 

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { 
   DevicePolicy, 
@@ -35,6 +36,8 @@ export class WatchtowerStore {
   private stmtUpsertDailyUsage!: StatementSync;
   private stmtInsertTelemetry!: StatementSync;
   private stmtInsertActivityLog!: StatementSync;
+  private stmtGetSetting!: StatementSync;
+  private stmtUpsertSetting!: StatementSync;
 
   constructor(storageDir?: string) {
     const dir = storageDir || process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -54,12 +57,19 @@ export class WatchtowerStore {
 
     this.initTables();
     this.initStatements();
+    this.initSettings();
     this.migrateFromJsonIfNeeded(dir);
     this.loadFromDb();
   }
 
   private initTables(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS policies (
         device_id TEXT PRIMARY KEY,
         data TEXT NOT NULL,
@@ -134,6 +144,29 @@ export class WatchtowerStore {
       INSERT INTO app_activity_logs (id, device_id, app, window_title, category, timestamp, date, hour, duration_seconds)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
     `);
+
+    this.stmtGetSetting = this.db.prepare(`
+      SELECT value FROM system_settings WHERE key = ?;
+    `);
+
+    this.stmtUpsertSetting = this.db.prepare(`
+      INSERT INTO system_settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at;
+    `);
+  }
+
+  private initSettings(): void {
+    const existingHash = this.getSetting('dashboard_password_hash');
+    if (!existingHash) {
+      this.setPassword('0000');
+    }
+
+    if (!this.getSetting('session_secret')) {
+      this.setSetting('session_secret', crypto.randomBytes(32).toString('hex'));
+    }
   }
 
   private migrateFromJsonIfNeeded(dir: string): void {
@@ -565,7 +598,73 @@ export class WatchtowerStore {
     return list;
   }
 
+  public getSetting(key: string): string | null {
+    try {
+      const row = this.stmtGetSetting.get(key) as { value: string } | undefined;
+      return row ? row.value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  public setSetting(key: string, value: string): void {
+    const now = new Date().toISOString();
+    this.stmtUpsertSetting.run(key, value, now);
+  }
+
+  public verifyPassword(password: string): boolean {
+    if (!password || typeof password !== 'string') return false;
+    const salt = this.getSetting('dashboard_password_salt');
+    const hash = this.getSetting('dashboard_password_hash');
+    if (!salt || !hash) return false;
+
+    try {
+      const computed = crypto.scryptSync(password, salt, 64).toString('hex');
+      const bufA = Buffer.from(computed, 'hex');
+      const bufB = Buffer.from(hash, 'hex');
+      if (bufA.length !== bufB.length) return false;
+      return crypto.timingSafeEqual(bufA, bufB);
+    } catch {
+      return false;
+    }
+  }
+
+  public setPassword(newPassword: string): void {
+    if (!newPassword || typeof newPassword !== 'string') {
+      throw new Error('Password must be a non-empty string');
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(newPassword, salt, 64).toString('hex');
+    this.setSetting('dashboard_password_salt', salt);
+    this.setSetting('dashboard_password_hash', hash);
+  }
+
+  public createSessionToken(): string {
+    const secret = this.getSetting('session_secret') || 'default-watchtower-secret';
+    const payload = `${Date.now()}_${crypto.randomBytes(16).toString('hex')}`;
+    const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    return `${payload}.${signature}`;
+  }
+
+  public verifySessionToken(token: string): boolean {
+    if (!token || typeof token !== 'string') return false;
+    const parts = token.split('.');
+    if (parts.length !== 2) return false;
+    const [payload, signature] = parts;
+    const secret = this.getSetting('session_secret') || 'default-watchtower-secret';
+    try {
+      const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+      const bufA = Buffer.from(signature, 'hex');
+      const bufB = Buffer.from(expectedSig, 'hex');
+      if (bufA.length !== bufB.length) return false;
+      return crypto.timingSafeEqual(bufA, bufB);
+    } catch {
+      return false;
+    }
+  }
+
   public close(): void {
     this.db.close();
   }
 }
+

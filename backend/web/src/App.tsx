@@ -25,7 +25,12 @@ import {
   TrendingUp,
   Search,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Key,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  X
 } from 'lucide-react';
 
 interface AppRule {
@@ -123,6 +128,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'monitor' | 'analytics' | 'limits' | 'apps' | 'telemetry'>('monitor');
   const [notification, setNotification] = useState<string | null>(null);
 
+  // Authentication state
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('watchtower_token'));
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+
+  // Change password modal state
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState<boolean>(false);
+  const [currPassword, setCurrPassword] = useState<string>('');
+  const [newPassword, setNewPassword] = useState<string>('');
+  const [confirmPassword, setConfirmPassword] = useState<string>('');
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState<boolean>(false);
+
   // Analytics & Timeline state
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -132,7 +153,6 @@ export default function App() {
   const [timelineSearch, setTimelineSearch] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
-
 
   // New app rule form state
   const [newAppExe, setNewAppExe] = useState('');
@@ -147,10 +167,136 @@ export default function App() {
     setTimeout(() => setNotification(null), 4000);
   };
 
+  const authFetch = async (url: string, options: RequestInit = {}) => {
+    const currentToken = token || localStorage.getItem('watchtower_token') || '';
+    const headers: Record<string, string> = {
+      ...(options.headers as Record<string, string> || {}),
+      'Authorization': `Bearer ${currentToken}`
+    };
+    if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      localStorage.removeItem('watchtower_token');
+      setToken(null);
+      setIsAuthenticated(false);
+      throw new Error('Unauthorized. Please unlock the dashboard.');
+    }
+    return res;
+  };
+
+  // Verify auth on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const savedToken = localStorage.getItem('watchtower_token');
+      if (!savedToken) {
+        setIsAuthenticated(false);
+        return;
+      }
+      try {
+        const res = await fetch('/api/auth/status', {
+          headers: { 'Authorization': `Bearer ${savedToken}` }
+        });
+        const data = await res.json();
+        if (data.authenticated) {
+          setToken(savedToken);
+          setIsAuthenticated(true);
+        } else {
+          localStorage.removeItem('watchtower_token');
+          setToken(null);
+          setIsAuthenticated(false);
+        }
+      } catch {
+        setToken(savedToken);
+        setIsAuthenticated(true);
+      }
+    };
+    checkAuth();
+  }, []);
+
+  const handleLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setLoginError(null);
+    setIsLoggingIn(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginPassword })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.token) {
+        localStorage.setItem('watchtower_token', data.token);
+        setToken(data.token);
+        setIsAuthenticated(true);
+        setLoginPassword('');
+        showNotification('🛡️ Dashboard unlocked');
+      } else {
+        setLoginError(data.error || 'Incorrect password. Default is 0000.');
+      }
+    } catch {
+      setLoginError('Failed to connect to server');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLockDashboard = () => {
+    localStorage.removeItem('watchtower_token');
+    setToken(null);
+    setIsAuthenticated(false);
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    showNotification('🔒 Dashboard locked');
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePasswordError(null);
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError('New passwords do not match');
+      return;
+    }
+    if (newPassword.length < 1) {
+      setChangePasswordError('New password cannot be empty');
+      return;
+    }
+    setIsChangingPassword(true);
+    try {
+      const res = await authFetch('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: currPassword, newPassword })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.token) {
+          localStorage.setItem('watchtower_token', data.token);
+          setToken(data.token);
+        }
+        setIsChangePasswordOpen(false);
+        setCurrPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        showNotification('✅ Dashboard password successfully changed!');
+      } else {
+        setChangePasswordError(data.error || 'Failed to change password');
+      }
+    } catch (err: any) {
+      setChangePasswordError(err.message || 'Error communicating with server');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
   const connectWebSocket = () => {
+    const currentToken = token || localStorage.getItem('watchtower_token');
+    if (!currentToken) return;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/dashboard`;
+    const wsUrl = `${protocol}//${host}/ws/dashboard?token=${encodeURIComponent(currentToken)}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -229,15 +375,17 @@ export default function App() {
 
     ws.onclose = () => {
       setWsConnected(false);
-      setTimeout(connectWebSocket, 3000);
+      if (localStorage.getItem('watchtower_token')) {
+        setTimeout(connectWebSocket, 3000);
+      }
     };
   };
 
   const fetchAnalyticsData = (deviceId: string, date: string) => {
-    if (!deviceId) return;
+    if (!deviceId || !isAuthenticated) return;
     
     // 1. Fetch Hourly breakdown
-    fetch(`/api/devices/${encodeURIComponent(deviceId)}/hourly?date=${date}`)
+    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/hourly?date=${date}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.hourly) setHourlyData(d.hourly);
@@ -245,7 +393,7 @@ export default function App() {
       .catch(() => {});
 
     // 2. Fetch Timeline records
-    fetch(`/api/devices/${encodeURIComponent(deviceId)}/timeline?date=${date}&limit=200`)
+    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/timeline?date=${date}&limit=200`)
       .then((r) => r.json())
       .then((d) => {
         if (d.timeline) setTimelineData(d.timeline);
@@ -253,7 +401,7 @@ export default function App() {
       .catch(() => {});
 
     // 3. Fetch 14-day history
-    fetch(`/api/devices/${encodeURIComponent(deviceId)}/history?days=14`)
+    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/history?days=14`)
       .then((r) => r.json())
       .then((d) => {
         if (d.history) setDailyHistory(d.history);
@@ -262,7 +410,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetch('/api/devices')
+    if (!isAuthenticated) return;
+
+    authFetch('/api/devices')
       .then((r) => r.json())
       .then((d) => {
         if (d.devices && d.devices.length > 0) {
@@ -275,7 +425,7 @@ export default function App() {
       })
       .catch(() => {});
 
-    fetch('/api/devices/windows-pc/telemetry?limit=50')
+    authFetch('/api/devices/windows-pc/telemetry?limit=50')
       .then((r) => r.json())
       .then((d) => {
         if (d.telemetry) setTelemetry(d.telemetry);
@@ -287,7 +437,7 @@ export default function App() {
     return () => {
       wsRef.current?.close();
     };
-  }, []);
+  }, [isAuthenticated, token]);
 
   useEffect(() => {
     if (selectedDeviceId) {
@@ -339,9 +489,8 @@ export default function App() {
 
   const handleGrantTime = async (minutes: number) => {
     try {
-      const res = await fetch(`/api/devices/${currentDevice.deviceId}/grant-time`, {
+      const res = await authFetch(`/api/devices/${currentDevice.deviceId}/grant-time`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ extraMinutes: minutes })
       });
       if (res.ok) {
@@ -355,9 +504,8 @@ export default function App() {
   const handleToggleEmergencyLock = async () => {
     const newLockState = !currentDevice.policy.emergencyLock;
     try {
-      const res = await fetch(`/api/devices/${currentDevice.deviceId}/emergency-lock`, {
+      const res = await authFetch(`/api/devices/${currentDevice.deviceId}/emergency-lock`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ locked: newLockState })
       });
       if (res.ok) {
@@ -371,9 +519,8 @@ export default function App() {
   const handleKillActiveApp = async () => {
     if (!currentDevice.session?.currentApp) return;
     try {
-      const res = await fetch(`/api/devices/${currentDevice.deviceId}/kill-app`, {
+      const res = await authFetch(`/api/devices/${currentDevice.deviceId}/kill-app`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ executableName: currentDevice.session.currentApp })
       });
       if (res.ok) {
@@ -386,9 +533,8 @@ export default function App() {
 
   const handleSavePolicy = async (updatedPolicy: DevicePolicy) => {
     try {
-      const res = await fetch(`/api/devices/${currentDevice.deviceId}/policy`, {
+      const res = await authFetch(`/api/devices/${currentDevice.deviceId}/policy`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedPolicy)
       });
       if (res.ok) {
@@ -514,6 +660,168 @@ export default function App() {
         </div>
       )}
 
+      {/* Parental Password Lock Screen Gate */}
+      {!isAuthenticated && (
+        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
+            
+            <div className="p-4 bg-blue-600/10 border border-blue-500/20 rounded-2xl text-blue-400 mb-5 shadow-lg shadow-blue-500/5">
+              <Shield className="w-10 h-10" />
+            </div>
+
+            <h2 className="text-2xl font-bold text-white tracking-tight mb-2">Watchtower Control Center</h2>
+            <p className="text-sm text-slate-400 mb-6">Enter parent password to access device controls and analytics</p>
+
+            <form onSubmit={handleLogin} className="w-full space-y-4">
+              <div className="relative">
+                <input
+                  type={showLoginPassword ? 'text' : 'password'}
+                  value={loginPassword}
+                  onChange={(e) => {
+                    setLoginPassword(e.target.value);
+                    if (loginError) setLoginError(null);
+                  }}
+                  placeholder="Enter password..."
+                  autoFocus
+                  className="w-full bg-slate-950/80 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-white text-center text-lg tracking-wider rounded-2xl px-4 py-3.5 outline-none transition-all pr-12"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1"
+                >
+                  {showLoginPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+
+              {loginError && (
+                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-medium text-left">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoggingIn}
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3.5 px-4 rounded-2xl shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isLoggingIn ? (
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    Unlocking...
+                  </span>
+                ) : (
+                  <>
+                    <Unlock className="w-4 h-4" />
+                    Unlock Dashboard
+                  </>
+                )}
+              </button>
+
+              <div className="pt-3 border-t border-slate-800/60 flex items-center justify-center gap-2 text-xs text-slate-500">
+                <Key className="w-3.5 h-3.5 text-slate-400" />
+                <span>Default parent PIN is <strong className="text-slate-300 font-mono">0000</strong></span>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {isChangePasswordOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col relative">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Change Dashboard Password</h3>
+                  <p className="text-xs text-slate-400">Protect access to controls and screen time logs</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsChangePasswordOpen(false);
+                  setChangePasswordError(null);
+                }}
+                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Current Password</label>
+                <input
+                  type="password"
+                  value={currPassword}
+                  onChange={(e) => setCurrPassword(e.target.value)}
+                  placeholder="Enter current password (default: 0000)"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Confirm New Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter new password"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
+                />
+              </div>
+
+              {changePasswordError && (
+                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-medium">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{changePasswordError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsChangePasswordOpen(false);
+                    setChangePasswordError(null);
+                  }}
+                  className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isChangingPassword}
+                  className="px-5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-md shadow-blue-600/20 transition-all disabled:opacity-50"
+                >
+                  {isChangingPassword ? 'Saving...' : 'Update Password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -552,6 +860,26 @@ export default function App() {
               <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
               <span className="text-slate-300 font-medium">{wsConnected ? 'Live Sync' : 'Reconnecting...'}</span>
             </div>
+
+            {/* Change Password Button */}
+            <button
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer"
+              title="Change Dashboard Password"
+            >
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Password</span>
+            </button>
+
+            {/* Lock Dashboard Button */}
+            <button
+              onClick={handleLockDashboard}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer"
+              title="Lock Dashboard"
+            >
+              <Lock className="w-3.5 h-3.5 text-slate-400" />
+              <span className="hidden sm:inline">Lock</span>
+            </button>
 
             {/* Emergency Lock Toggle */}
             <button
