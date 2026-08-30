@@ -36,8 +36,11 @@ export class WatchtowerStore {
   private stmtUpsertDailyUsage!: StatementSync;
   private stmtInsertTelemetry!: StatementSync;
   private stmtInsertActivityLog!: StatementSync;
+  private stmtUpdateActivityDuration!: StatementSync;
   private stmtGetSetting!: StatementSync;
   private stmtUpsertSetting!: StatementSync;
+
+  private lastActivityMap: Map<string, { id: string; app: string; windowTitle: string; timestampMs: number; date: string }> = new Map();
 
   constructor(storageDir?: string) {
     const dir = storageDir || process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -143,6 +146,13 @@ export class WatchtowerStore {
     this.stmtInsertActivityLog = this.db.prepare(`
       INSERT INTO app_activity_logs (id, device_id, app, window_title, category, timestamp, date, hour, duration_seconds)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+
+    this.stmtUpdateActivityDuration = this.db.prepare(`
+      UPDATE app_activity_logs
+      SET duration_seconds = duration_seconds + ?,
+          window_title = CASE WHEN ? != '' THEN ? ELSE window_title END
+      WHERE id = ?;
     `);
 
     this.stmtGetSetting = this.db.prepare(`
@@ -376,24 +386,48 @@ export class WatchtowerStore {
       usage.categorySeconds[category] = (usage.categorySeconds[category] || 0) + delta;
       usage.appSeconds[normApp] = (usage.appSeconds[normApp] || 0) + delta;
 
-      // Record chronological activity log
+      // Record chronological activity log or extend continuous activity block
       try {
         const now = new Date();
-        const activityId = `${payload.deviceId}_${now.getTime()}_${Math.random().toString(36).substring(2, 7)}`;
-        this.stmtInsertActivityLog.run(
-          activityId,
-          payload.deviceId,
-          normApp,
-          payload.windowTitle || '',
-          category,
-          now.toISOString(),
-          today,
-          now.getHours(),
-          delta
-        );
+        const nowMs = now.getTime();
+        const last = this.lastActivityMap.get(payload.deviceId);
+        const winTitle = payload.windowTitle || '';
+
+        // If same app, same date, and last recorded heartbeat was within 30 seconds, merge duration
+        if (last && last.app === normApp && last.date === today && (nowMs - last.timestampMs) < 30000) {
+          this.stmtUpdateActivityDuration.run(delta, winTitle, winTitle, last.id);
+          last.timestampMs = nowMs;
+          if (winTitle) {
+            last.windowTitle = winTitle;
+          }
+        } else {
+          // New continuous activity block
+          const activityId = `${payload.deviceId}_${nowMs}_${Math.random().toString(36).substring(2, 7)}`;
+          this.stmtInsertActivityLog.run(
+            activityId,
+            payload.deviceId,
+            normApp,
+            winTitle,
+            category,
+            now.toISOString(),
+            today,
+            now.getHours(),
+            delta
+          );
+          this.lastActivityMap.set(payload.deviceId, {
+            id: activityId,
+            app: normApp,
+            windowTitle: winTitle,
+            timestampMs: nowMs,
+            date: today
+          });
+        }
       } catch (err) {
-        console.error('Failed to insert activity log:', err);
+        console.error('Failed to insert/update activity log:', err);
       }
+    } else if (payload.isIdle) {
+      // User is idle, reset continuous session for next active app
+      this.lastActivityMap.delete(payload.deviceId);
     }
 
     // Update active session
@@ -421,9 +455,8 @@ export class WatchtowerStore {
         SELECT id, device_id, app, window_title, category, timestamp, date, hour, duration_seconds
         FROM app_activity_logs
         WHERE device_id = ? AND date = ?
-        ORDER BY timestamp DESC
-        LIMIT ?;
-      `).all(deviceId, date, limit) as Array<{
+        ORDER BY timestamp ASC;
+      `).all(deviceId, date) as Array<{
         id: string;
         device_id: string;
         app: string;
@@ -435,17 +468,55 @@ export class WatchtowerStore {
         duration_seconds: number;
       }>;
 
-      return rows.map(r => ({
-        id: r.id,
-        deviceId: r.device_id,
-        app: r.app,
-        windowTitle: r.window_title,
-        category: r.category as AppCategory,
-        timestamp: r.timestamp,
-        date: r.date,
-        hour: Number(r.hour),
-        durationSeconds: Number(r.duration_seconds)
-      }));
+      if (rows.length === 0) return [];
+
+      const coalesced: AppActivityLog[] = [];
+      let current: AppActivityLog | null = null;
+
+      for (const r of rows) {
+        const itemTime = new Date(r.timestamp).getTime();
+        const durationSec = Math.max(1, Number(r.duration_seconds));
+        const itemEndTime = itemTime + durationSec * 1000;
+
+        if (current) {
+          const currentTime = new Date(current.timestamp).getTime();
+          const currentEndTime = current.endTime ? new Date(current.endTime).getTime() : currentTime + current.durationSeconds * 1000;
+          
+          const gapMs = itemTime - currentEndTime;
+          const isContiguous = gapMs >= -5000 && gapMs <= 90000;
+
+          if (current.app.toLowerCase() === r.app.toLowerCase() && isContiguous) {
+            current.durationSeconds += durationSec;
+            current.endTime = new Date(Math.max(currentEndTime, itemEndTime)).toISOString();
+            if (r.window_title && r.window_title.trim() && (!current.windowTitle || current.windowTitle === '<No title>' || current.windowTitle.length < r.window_title.length)) {
+              current.windowTitle = r.window_title;
+            }
+            continue;
+          } else {
+            coalesced.push(current);
+            current = null;
+          }
+        }
+
+        current = {
+          id: r.id,
+          deviceId: r.device_id,
+          app: r.app,
+          windowTitle: r.window_title,
+          category: r.category as AppCategory,
+          timestamp: r.timestamp,
+          endTime: new Date(itemEndTime).toISOString(),
+          date: r.date,
+          hour: Number(r.hour),
+          durationSeconds: durationSec
+        };
+      }
+
+      if (current) {
+        coalesced.push(current);
+      }
+
+      return coalesced.reverse().slice(0, limit);
     } catch (err) {
       console.error('Error fetching timeline from SQLite:', err);
       return [];

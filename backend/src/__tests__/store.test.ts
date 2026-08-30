@@ -236,5 +236,50 @@ describe('Watchtower SQLite Store', () => {
     expect(history.length).toBeGreaterThanOrEqual(1);
     expect(history[0].totalActiveSeconds).toBe(50);
   });
+
+  it('groups continuing app heartbeats together in timeline rather than creating duplicate 3s rows', () => {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Simulate 5 consecutive 3s heartbeats in zen.exe
+    for (let i = 0; i < 5; i++) {
+      store.recordHeartbeat({
+        deviceId: 'grouped-pc',
+        hostname: 'grouped-host',
+        currentApp: 'zen.exe',
+        windowTitle: `Tab ${i} - YouTube — Zen Browser`,
+        isIdle: false,
+        idleSeconds: 0,
+        elapsedActiveDeltaSeconds: 3
+      });
+    }
+
+    // Timeline should have only 1 merged entry with total duration 15s
+    const timeline1 = store.getTimeline('grouped-pc', today);
+    expect(timeline1.length).toBe(1);
+    expect(timeline1[0].app).toBe('zen.exe');
+    expect(timeline1[0].durationSeconds).toBe(15);
+    expect(timeline1[0].category).toBe('Browsers');
+
+    // Now switch to Code.exe for 3 consecutive 3s heartbeats
+    for (let i = 0; i < 3; i++) {
+      store.recordHeartbeat({
+        deviceId: 'grouped-pc',
+        hostname: 'grouped-host',
+        currentApp: 'Code.exe',
+        windowTitle: 'main.rs - watchtower',
+        isIdle: false,
+        idleSeconds: 0,
+        elapsedActiveDeltaSeconds: 3
+      });
+    }
+
+    const timeline2 = store.getTimeline('grouped-pc', today);
+    expect(timeline2.length).toBe(2);
+    // Newest is Code.exe (9s), previous is zen.exe (15s)
+    expect(timeline2[0].app).toBe('code.exe');
+    expect(timeline2[0].durationSeconds).toBe(9);
+    expect(timeline2[1].app).toBe('zen.exe');
+    expect(timeline2[1].durationSeconds).toBe(15);
+  });
 });
 

@@ -111,7 +111,8 @@ export interface AppActivityLog {
   app: string;
   windowTitle: string;
   category: AppCategory;
-  timestamp: string; // ISO 8601
+  timestamp: string; // ISO 8601 (start time)
+  endTime?: string; // ISO 8601 (end time of contiguous block)
   date: string; // YYYY-MM-DD
   hour: number; // 0..23
   durationSeconds: number;

@@ -108,6 +108,7 @@ interface AppActivityLog {
   windowTitle: string;
   category: string;
   timestamp: string;
+  endTime?: string;
   date: string;
   hour: number;
   durationSeconds: number;
@@ -1396,10 +1397,15 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {filteredTimeline.map((log) => {
-                      const timeStr = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                      const startDate = new Date(log.timestamp);
+                      const endDate = log.endTime ? new Date(log.endTime) : new Date(startDate.getTime() + log.durationSeconds * 1000);
+                      const startStr = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                      const endStr = endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                      const timeDisplay = log.durationSeconds >= 10 ? `${startStr} – ${endStr}` : startStr;
+
                       return (
                         <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
-                          <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">{timeStr}</td>
+                          <td className="py-3 px-4 font-mono text-slate-300 whitespace-nowrap">{timeDisplay}</td>
                           <td className="py-3 px-4 font-semibold text-white whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               {getCategoryIcon(log.category)}
@@ -1414,7 +1420,7 @@ export default function App() {
                           <td className="py-3 px-4 text-slate-300 max-w-md truncate" title={log.windowTitle}>
                             {log.windowTitle || '<No title>'}
                           </td>
-                          <td className="py-3 px-4 text-right font-mono text-blue-300 whitespace-nowrap">
+                          <td className="py-3 px-4 text-right font-mono text-blue-300 whitespace-nowrap font-medium">
                             {formatSeconds(log.durationSeconds)}
                           </td>
                         </tr>
