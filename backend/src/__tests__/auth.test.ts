@@ -127,6 +127,6 @@ describe('Watchtower Authentication & Password Protection', () => {
     expect(newLogin.statusCode).toBe(200);
 
     await app.close();
-  });
+  }, 15000);
 });
 

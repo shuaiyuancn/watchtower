@@ -48,7 +48,7 @@ export function registerApiRoutes(
 
     const isValid = store.verifyPassword(password);
     if (!isValid) {
-      return reply.code(401).send({ success: false, error: 'Incorrect password. Default is 0000.' });
+      return reply.code(401).send({ success: false, error: 'Incorrect password.' });
     }
 
     const token = store.createSessionToken();

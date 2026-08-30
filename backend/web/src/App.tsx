@@ -719,11 +719,6 @@ export default function App() {
                   </>
                 )}
               </button>
-
-              <div className="pt-3 border-t border-slate-800/60 flex items-center justify-center gap-2 text-xs text-slate-500">
-                <Key className="w-3.5 h-3.5 text-slate-400" />
-                <span>Default parent PIN is <strong className="text-slate-300 font-mono">0000</strong></span>
-              </div>
             </form>
           </div>
         </div>
@@ -761,7 +756,7 @@ export default function App() {
                   type="password"
                   value={currPassword}
                   onChange={(e) => setCurrPassword(e.target.value)}
-                  placeholder="Enter current password (default: 0000)"
+                  placeholder="Enter current password"
                   required
                   className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
                 />
