@@ -22,6 +22,8 @@ pub fn show_warning_toast(title: &str, message: &str) {
 
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+
         // Execute PowerShell Windows Toast Notification
         let script = format!(
             r#"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;
@@ -45,8 +47,9 @@ pub fn show_warning_toast(title: &str, message: &str) {
             message = message.replace('"', "`\"")
         );
 
-        let _ = Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-            .spawn();
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script]);
+        cmd.creation_flags(0x08000000);
+        let _ = cmd.spawn();
     }
 }

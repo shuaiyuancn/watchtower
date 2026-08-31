@@ -50,7 +50,13 @@ pub async fn perform_self_update(download_url: &str, expected_sha256: &str) -> R
     info!("Update successfully applied! Spawning new version...");
 
     // 6. Spawn new executable
-    let _ = Command::new(&current_exe).spawn();
+    let mut cmd = Command::new(&current_exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let _ = cmd.spawn();
 
     // 7. Terminate old process
     std::process::exit(0);

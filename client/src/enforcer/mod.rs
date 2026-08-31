@@ -1,5 +1,6 @@
 #[cfg(windows)]
 mod win_enforce {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
     use tracing::{error, info};
     use windows::Win32::Foundation::CloseHandle;
@@ -21,9 +22,10 @@ mod win_enforce {
         }
 
         // Fallback to taskkill /F /PID
-        let status = Command::new("taskkill")
-            .args(["/F", "/PID", &pid.to_string()])
-            .output();
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/F", "/PID", &pid.to_string()]);
+        cmd.creation_flags(0x08000000);
+        let status = cmd.output();
 
         match status {
             Ok(output) if output.status.success() => {
@@ -38,9 +40,10 @@ mod win_enforce {
     }
 
     pub fn kill_process_by_name(exe_name: &str) -> bool {
-        let status = Command::new("taskkill")
-            .args(["/F", "/IM", exe_name])
-            .output();
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/F", "/IM", exe_name]);
+        cmd.creation_flags(0x08000000);
+        let status = cmd.output();
 
         match status {
             Ok(output) if output.status.success() => {
