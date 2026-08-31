@@ -349,10 +349,10 @@ try {
 Start-Sleep -Milliseconds 300
 $proc = Get-Process -Name "watchtower" -ErrorAction SilentlyContinue
 if (-not $proc) {
-    Start-Process -FilePath $BinaryPath -ArgumentList @("--config", $ConfigPath) -WindowStyle Hidden
+    Start-Process -FilePath $BinaryPath -ArgumentList @("--config", "$ConfigPath")
 }
 
-Write-Host " Watchtower Client successfully installed, running in background, and protected by watchdog!" -ForegroundColor Green
+Write-Host " Watchtower Client successfully installed, running in background, and protected by Task Scheduler!" -ForegroundColor Green
 `;
     reply.type('text/plain; charset=utf-8');
     return script;
