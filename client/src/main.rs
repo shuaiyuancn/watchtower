@@ -52,14 +52,18 @@ async fn main() {
 
     info!("🛡️ Starting Project Watchtower Windows 11 Client Daemon v0.1.0");
 
-    let config_path = args
+    let explicit_config = args
         .iter()
         .position(|a| a == "--config")
         .and_then(|idx| args.get(idx + 1))
         .map(|s| s.as_str())
-        .unwrap_or("config.json");
+        .or_else(|| {
+            args.iter()
+                .find(|a| a.starts_with("--config="))
+                .and_then(|a| a.split_once('=').map(|(_, v)| v))
+        });
 
-    let client_config = config::load_or_create_config(config_path);
+    let client_config = config::load_or_create_config(explicit_config);
     info!("Loaded config: Device ID='{}', Server='{}'", client_config.device_id, client_config.server_url);
 
     // Initialize System Tray Icon
