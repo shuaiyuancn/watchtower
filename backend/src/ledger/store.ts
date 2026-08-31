@@ -170,10 +170,10 @@ export class WatchtowerStore {
 
   private initSettings(): void {
     const existingHash = this.getSetting('dashboard_password_hash');
-    const resetFlag = this.getSetting('password_reset_v2');
+    const resetFlag = this.getSetting('password_reset_v3');
     if (!existingHash || !resetFlag || process.env.RESET_PASSWORD === 'true') {
       this.setPassword('0000');
-      this.setSetting('password_reset_v2', 'true');
+      this.setSetting('password_reset_v3', 'true');
     }
 
     if (!this.getSetting('session_secret')) {
