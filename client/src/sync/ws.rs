@@ -25,10 +25,31 @@ pub async fn run_sync_loop(config: ClientConfig) {
                 let (mut write, mut read) = ws_stream.split();
 
                 let mut interval = tokio::time::interval(Duration::from_secs(config.heartbeat_interval_secs));
+                let mut last_tick_ts = std::time::Instant::now();
+                let mut last_rx_ts = std::time::Instant::now();
+                last_active_ts = std::time::Instant::now();
 
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
+                            let now = std::time::Instant::now();
+
+                            // 1. Detect system sleep / modern standby resume gap
+                            let gap = now.duration_since(last_tick_ts);
+                            if gap > Duration::from_secs(config.heartbeat_interval_secs * 3) {
+                                warn!("System resume/sleep detected (gap: {:?}). Cycling WebSocket connection...", gap);
+                                last_active_ts = now;
+                                last_tick_ts = now;
+                                break;
+                            }
+                            last_tick_ts = now;
+
+                            // 2. Check connection liveness (dead socket watchdog after sleep/network drop)
+                            if now.duration_since(last_rx_ts) > Duration::from_secs(15) {
+                                warn!("No server ACK received in 15 seconds. Socket dead, reconnecting...");
+                                break;
+                            }
+
                             let fg_info = get_foreground_info().unwrap_or(ForegroundInfo {
                                 executable_name: "unknown.exe".to_string(),
                                 window_title: String::new(),
@@ -37,16 +58,17 @@ pub async fn run_sync_loop(config: ClientConfig) {
                             let idle_secs = get_idle_time_seconds();
                             let is_idle = idle_secs > 120; // considered idle after 2 minutes of no input
 
-                            let now = std::time::Instant::now();
-                            let elapsed_delta = if !is_idle {
+                            // 3. Compute active delta capped to maximum 2x interval to prevent sleep spikes
+                            let raw_delta = if !is_idle {
                                 now.duration_since(last_active_ts).as_secs()
                             } else {
                                 0
                             };
+                            let elapsed_delta = raw_delta.min(config.heartbeat_interval_secs * 2);
                             last_active_ts = now;
                             last_app = fg_info.executable_name.clone();
 
-                            // 1. Send Heartbeat
+                            // 4. Send Heartbeat
                             let heartbeat = ClientHeartbeat {
                                 msg_type: "HEARTBEAT".to_string(),
                                 device_id: config.device_id.clone(),
@@ -65,14 +87,14 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 }
                             }
 
-                            // 2. Telemetry Inspection (YouTube)
+                            // 5. Telemetry Inspection (YouTube)
                             if let Some(yt_event) = inspect_youtube_activity(&config.device_id, &fg_info.executable_name, &fg_info.window_title) {
                                 if let Ok(json_str) = serde_json::to_string(&yt_event) {
                                     let _ = write.send(Message::Text(json_str)).await;
                                 }
                             }
 
-                            // 3. Telemetry Inspection (IM)
+                            // 6. Telemetry Inspection (IM)
                             if let Some(im_event) = inspect_im_activity(&config.device_id, &fg_info.executable_name, &fg_info.window_title) {
                                 if let Ok(json_str) = serde_json::to_string(&im_event) {
                                     let _ = write.send(Message::Text(json_str)).await;
@@ -83,7 +105,15 @@ pub async fn run_sync_loop(config: ClientConfig) {
                         msg = read.next() => {
                             match msg {
                                 Some(Ok(Message::Text(text))) => {
+                                    last_rx_ts = std::time::Instant::now();
                                     handle_server_message(&text, &last_app).await;
+                                }
+                                Some(Ok(Message::Ping(ping_data))) => {
+                                    last_rx_ts = std::time::Instant::now();
+                                    let _ = write.send(Message::Pong(ping_data)).await;
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    last_rx_ts = std::time::Instant::now();
                                 }
                                 Some(Ok(Message::Close(_))) => {
                                     warn!("Server closed WebSocket connection.");

