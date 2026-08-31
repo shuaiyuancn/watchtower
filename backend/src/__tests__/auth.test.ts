@@ -3,17 +3,20 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { WatchtowerStore } from '../ledger/store.js';
+import { clearAllAuthRateLimits } from '../routes/api.js';
 
 describe('Watchtower Authentication & Password Protection', () => {
   let tempDir: string;
   let store: WatchtowerStore;
 
   beforeEach(() => {
+    clearAllAuthRateLimits();
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtower-auth-test-'));
     store = new WatchtowerStore(tempDir);
   });
 
   afterEach(() => {
+    clearAllAuthRateLimits();
     try {
       store.close();
     } catch {}
@@ -57,6 +60,48 @@ describe('Watchtower Authentication & Password Protection', () => {
     reopenedStore.close();
   });
 
+  it('enforces 5-second retry rate limit on failed password attempts to block brute-forcing', async () => {
+    const { createServer } = await import('../server.js');
+    process.env.DATA_DIR = tempDir;
+    const { app } = await createServer();
+
+    // 1. First bad attempt -> 401 Unauthorized with Retry-After header
+    const badLogin1 = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '192.168.1.50' },
+      payload: { password: 'wrong' }
+    });
+    expect(badLogin1.statusCode).toBe(401);
+    const badBody1 = JSON.parse(badLogin1.body);
+    expect(badBody1.retryAfter).toBe(5);
+    expect(badLogin1.headers['retry-after']).toBe('5');
+
+    // 2. Immediate second attempt from same IP (e.g. rapid script or second tab) -> 429 Too Many Requests
+    const rapidAttempt = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '192.168.1.50' },
+      payload: { password: '0000' } // even with correct password, blocked by cooldown
+    });
+    expect(rapidAttempt.statusCode).toBe(429);
+    const rapidBody = JSON.parse(rapidAttempt.body);
+    expect(rapidBody.success).toBe(false);
+    expect(rapidBody.error).toContain('Too many password attempts');
+    expect(rapidBody.retryAfter).toBeGreaterThanOrEqual(1);
+
+    // 3. Different IP is not blocked
+    const otherIpLogin = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '192.168.1.99' },
+      payload: { password: '0000' }
+    });
+    expect(otherIpLogin.statusCode).toBe(200);
+
+    await app.close();
+  }, 15000);
+
   it('verifies REST API auth routes and protects device endpoints', async () => {
     const { createServer } = await import('../server.js');
     process.env.DATA_DIR = tempDir;
@@ -73,14 +118,19 @@ describe('Watchtower Authentication & Password Protection', () => {
     const badLogin = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.0.0.1' },
       payload: { password: 'wrong' }
     });
     expect(badLogin.statusCode).toBe(401);
+
+    // Clear rate limits for clean happy path testing
+    clearAllAuthRateLimits();
 
     // 3. Successful login with default 0000
     const goodLogin = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.0.0.1' },
       payload: { password: '0000' }
     });
     expect(goodLogin.statusCode).toBe(200);
@@ -101,6 +151,7 @@ describe('Watchtower Authentication & Password Protection', () => {
     const changeRes = await app.inject({
       method: 'POST',
       url: '/api/auth/change-password',
+      headers: { 'x-forwarded-for': '10.0.0.1' },
       payload: {
         currentPassword: '0000',
         newPassword: '5555'
@@ -114,6 +165,7 @@ describe('Watchtower Authentication & Password Protection', () => {
     const oldLogin = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.0.0.2' },
       payload: { password: '0000' }
     });
     expect(oldLogin.statusCode).toBe(401);
@@ -122,6 +174,7 @@ describe('Watchtower Authentication & Password Protection', () => {
     const newLogin = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.0.0.3' },
       payload: { password: '5555' }
     });
     expect(newLogin.statusCode).toBe(200);

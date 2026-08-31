@@ -3,6 +3,43 @@ import { WatchtowerStore } from '../ledger/store.js';
 import { WebSocketHub } from '../ws/hub.js';
 import { DevicePolicy } from '../types.js';
 
+const AUTH_LOCKOUT_MS = 5000; // 5-second cooldown between failed attempts
+const failedAttemptsByIp = new Map<string, number>();
+
+export function clearAllAuthRateLimits(): void {
+  failedAttemptsByIp.clear();
+}
+
+function getClientIp(req: FastifyRequest): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.socket.remoteAddress || 'unknown-client';
+}
+
+function checkAuthRateLimit(ip: string): { allowed: boolean; retryAfter: number } {
+  const lastFailed = failedAttemptsByIp.get(ip);
+  if (!lastFailed) {
+    return { allowed: true, retryAfter: 0 };
+  }
+  const elapsed = Date.now() - lastFailed;
+  if (elapsed < AUTH_LOCKOUT_MS) {
+    const remainingSec = Math.ceil((AUTH_LOCKOUT_MS - elapsed) / 1000);
+    return { allowed: false, retryAfter: remainingSec };
+  }
+  failedAttemptsByIp.delete(ip);
+  return { allowed: true, retryAfter: 0 };
+}
+
+function recordFailedAttempt(ip: string): void {
+  failedAttemptsByIp.set(ip, Date.now());
+}
+
+function clearRateLimit(ip: string): void {
+  failedAttemptsByIp.delete(ip);
+}
+
 export function registerApiRoutes(
   server: FastifyInstance,
   store: WatchtowerStore,
@@ -41,6 +78,17 @@ export function registerApiRoutes(
 
   // Dashboard Authentication Endpoints
   server.post<{ Body: { password: string } }>('/api/auth/login', async (req, reply) => {
+    const ip = getClientIp(req);
+    const rateCheck = checkAuthRateLimit(ip);
+    if (!rateCheck.allowed) {
+      reply.header('Retry-After', rateCheck.retryAfter);
+      return reply.code(429).send({
+        success: false,
+        error: `Too many password attempts. Please wait ${rateCheck.retryAfter}s before retrying.`,
+        retryAfter: rateCheck.retryAfter
+      });
+    }
+
     const { password } = req.body || {};
     if (!password && password !== '') {
       return reply.code(400).send({ success: false, error: 'Password is required' });
@@ -48,9 +96,16 @@ export function registerApiRoutes(
 
     const isValid = store.verifyPassword(password);
     if (!isValid) {
-      return reply.code(401).send({ success: false, error: 'Incorrect password.' });
+      recordFailedAttempt(ip);
+      reply.header('Retry-After', 5);
+      return reply.code(401).send({
+        success: false,
+        error: 'Incorrect password. Please wait 5s before retrying.',
+        retryAfter: 5
+      });
     }
 
+    clearRateLimit(ip);
     const token = store.createSessionToken();
     return { success: true, token };
   });
@@ -62,19 +117,37 @@ export function registerApiRoutes(
   });
 
   server.post<{ Body: { currentPassword: string; newPassword: string } }>('/api/auth/change-password', async (req, reply) => {
+    const ip = getClientIp(req);
+    const rateCheck = checkAuthRateLimit(ip);
+    if (!rateCheck.allowed) {
+      reply.header('Retry-After', rateCheck.retryAfter);
+      return reply.code(429).send({
+        success: false,
+        error: `Too many password attempts. Please wait ${rateCheck.retryAfter}s before retrying.`,
+        retryAfter: rateCheck.retryAfter
+      });
+    }
+
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) {
       return reply.code(400).send({ success: false, error: 'Current password and new password are required' });
     }
 
     if (!store.verifyPassword(currentPassword)) {
-      return reply.code(401).send({ success: false, error: 'Current password is incorrect' });
+      recordFailedAttempt(ip);
+      reply.header('Retry-After', 5);
+      return reply.code(401).send({
+        success: false,
+        error: 'Current password is incorrect. Please wait 5s before retrying.',
+        retryAfter: 5
+      });
     }
 
     if (newPassword.length < 1) {
       return reply.code(400).send({ success: false, error: 'New password cannot be empty' });
     }
 
+    clearRateLimit(ip);
     store.setPassword(newPassword);
     const newToken = store.createSessionToken();
     return { success: true, token: newToken, message: 'Password successfully updated' };

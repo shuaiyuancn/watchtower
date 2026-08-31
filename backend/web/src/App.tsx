@@ -136,6 +136,14 @@ export default function App() {
   const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState<number>(() => {
+    const savedLockout = sessionStorage.getItem('watchtower_lockout_until');
+    if (savedLockout) {
+      const remaining = Math.ceil((parseInt(savedLockout, 10) - Date.now()) / 1000);
+      return remaining > 0 ? remaining : 0;
+    }
+    return 0;
+  });
 
   // Change password modal state
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState<boolean>(false);
@@ -216,8 +224,33 @@ export default function App() {
     checkAuth();
   }, []);
 
+  // Cooldown countdown timer ticker
+  useEffect(() => {
+    if (cooldownSeconds <= 0) {
+      sessionStorage.removeItem('watchtower_lockout_until');
+      return;
+    }
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => {
+        if (prev <= 1) {
+          sessionStorage.removeItem('watchtower_lockout_until');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
+
+  const startCooldown = (seconds: number = 5) => {
+    const lockoutUntil = Date.now() + seconds * 1000;
+    sessionStorage.setItem('watchtower_lockout_until', lockoutUntil.toString());
+    setCooldownSeconds(seconds);
+  };
+
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (cooldownSeconds > 0) return;
     setLoginError(null);
     setIsLoggingIn(true);
     try {
@@ -229,12 +262,18 @@ export default function App() {
       const data = await res.json();
       if (res.ok && data.success && data.token) {
         localStorage.setItem('watchtower_token', data.token);
+        sessionStorage.removeItem('watchtower_lockout_until');
+        setCooldownSeconds(0);
         setToken(data.token);
         setIsAuthenticated(true);
         setLoginPassword('');
         showNotification('🛡️ Dashboard unlocked');
       } else {
-        setLoginError(data.error || 'Incorrect password. Default is 0000.');
+        const retry = Number(data.retryAfter) || (res.status === 429 || res.status === 401 ? 5 : 0);
+        if (retry > 0) {
+          startCooldown(retry);
+        }
+        setLoginError(data.error || 'Incorrect password. Please wait 5s before retrying.');
       }
     } catch {
       setLoginError('Failed to connect to server');
@@ -679,18 +718,20 @@ export default function App() {
                 <input
                   type={showLoginPassword ? 'text' : 'password'}
                   value={loginPassword}
+                  disabled={isLoggingIn || cooldownSeconds > 0}
                   onChange={(e) => {
                     setLoginPassword(e.target.value);
                     if (loginError) setLoginError(null);
                   }}
-                  placeholder="Enter password..."
+                  placeholder={cooldownSeconds > 0 ? `Locked for ${cooldownSeconds}s...` : "Enter password..."}
                   autoFocus
-                  className="w-full bg-slate-950/80 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-white text-center text-lg tracking-wider rounded-2xl px-4 py-3.5 outline-none transition-all pr-12"
+                  className="w-full bg-slate-950/80 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-white text-center text-lg tracking-wider rounded-2xl px-4 py-3.5 outline-none transition-all pr-12 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <button
                   type="button"
+                  disabled={isLoggingIn || cooldownSeconds > 0}
                   onClick={() => setShowLoginPassword(!showLoginPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 disabled:opacity-40"
                 >
                   {showLoginPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -705,13 +746,22 @@ export default function App() {
 
               <button
                 type="submit"
-                disabled={isLoggingIn}
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3.5 px-4 rounded-2xl shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                disabled={isLoggingIn || cooldownSeconds > 0}
+                className={`w-full font-semibold py-3.5 px-4 rounded-2xl transition-all flex items-center justify-center gap-2 ${
+                  cooldownSeconds > 0
+                    ? 'bg-slate-800/80 border border-amber-500/30 text-amber-300 cursor-not-allowed shadow-inner'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 disabled:opacity-50'
+                }`}
               >
                 {isLoggingIn ? (
                   <span className="flex items-center gap-2">
                     <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                     Unlocking...
+                  </span>
+                ) : cooldownSeconds > 0 ? (
+                  <span className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 animate-pulse text-amber-400" />
+                    Please wait {cooldownSeconds}s...
                   </span>
                 ) : (
                   <>

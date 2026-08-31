@@ -16,6 +16,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 export async function createServer() {
   const app = Fastify({
+    trustProxy: true,
     logger: {
       level: process.env.LOG_LEVEL || 'info'
     }
