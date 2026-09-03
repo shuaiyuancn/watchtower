@@ -181,5 +181,65 @@ describe('Watchtower Authentication & Password Protection', () => {
 
     await app.close();
   }, 15000);
+
+  it('protects uninstaller script: requires parent password and hides cleanup commands in dynamic payload', async () => {
+    const { createServer } = await import('../server.js');
+    process.env.DATA_DIR = tempDir;
+    const { app } = await createServer();
+
+    // 1. GET /api/uninstall.ps1 should return ONLY the wrapper and NOT disclose the raw removal commands
+    const uninstallerWrapperRes = await app.inject({
+      method: 'GET',
+      url: '/api/uninstall.ps1'
+    });
+    expect(uninstallerWrapperRes.statusCode).toBe(200);
+    const wrapperScript = uninstallerWrapperRes.body;
+    expect(wrapperScript).toContain('/api/uninstall/execute');
+    expect(wrapperScript).toContain('Read-Host');
+    // Ensure raw removal commands are NOT in the downloaded uninstaller.ps1
+    expect(wrapperScript).not.toContain('Stop-Process -Name "watchtower"');
+    expect(wrapperScript).not.toContain('Unregister-ScheduledTask');
+    expect(wrapperScript).not.toContain('Remove-ItemProperty');
+
+    // 2. POST /api/uninstall/execute with incorrect password returns 401
+    const badUninstallRes = await app.inject({
+      method: 'POST',
+      url: '/api/uninstall/execute',
+      headers: { 'x-forwarded-for': '10.0.0.10' },
+      payload: { password: 'wrong-password' }
+    });
+    expect(badUninstallRes.statusCode).toBe(401);
+    const badUninstallBody = JSON.parse(badUninstallRes.body);
+    expect(badUninstallBody.success).toBe(false);
+    expect(badUninstallBody.error).toContain('Incorrect password');
+
+    // 3. Immediate retry from same IP triggers 429 rate limit cooldown
+    const rateLimitedRes = await app.inject({
+      method: 'POST',
+      url: '/api/uninstall/execute',
+      headers: { 'x-forwarded-for': '10.0.0.10' },
+      payload: { password: '0000' }
+    });
+    expect(rateLimitedRes.statusCode).toBe(429);
+
+    clearAllAuthRateLimits();
+
+    // 4. POST /api/uninstall/execute with correct password (default 0000) returns removal script payload
+    const goodUninstallRes = await app.inject({
+      method: 'POST',
+      url: '/api/uninstall/execute',
+      headers: { 'x-forwarded-for': '10.0.0.10' },
+      payload: { password: '0000' }
+    });
+    expect(goodUninstallRes.statusCode).toBe(200);
+    const goodUninstallBody = JSON.parse(goodUninstallRes.body);
+    expect(goodUninstallBody.success).toBe(true);
+    expect(goodUninstallBody.script).toContain('Stop-Process -Name "watchtower"');
+    expect(goodUninstallBody.script).toContain('Unregister-ScheduledTask');
+    expect(goodUninstallBody.script).toContain('SystemDiagnosticsHostTask');
+
+    await app.close();
+  }, 15000);
 });
+
 

