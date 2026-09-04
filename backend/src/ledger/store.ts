@@ -629,12 +629,41 @@ export class WatchtowerStore {
     return fullEvent;
   }
 
-  public getTelemetry(deviceId?: string, limit: number = 50): TelemetryEvent[] {
-    let list = this.telemetryLogs;
-    if (deviceId) {
-      list = list.filter(e => e.deviceId === deviceId);
+  public getTelemetry(deviceId?: string, limit: number = 50, date?: string, type?: string): TelemetryEvent[] {
+    try {
+      let query = 'SELECT data FROM telemetry_events WHERE 1=1';
+      const params: any[] = [];
+      if (deviceId) {
+        query += ' AND device_id = ?';
+        params.push(deviceId);
+      }
+      if (date) {
+        query += ' AND timestamp LIKE ?';
+        params.push(`${date}%`);
+      }
+      if (type) {
+        query += ' AND type = ?';
+        params.push(type);
+      }
+      query += ' ORDER BY timestamp DESC LIMIT ?;';
+      params.push(limit);
+
+      const rows = this.db.prepare(query).all(...params) as Array<{ data: string }>;
+      return rows.map(r => JSON.parse(r.data));
+    } catch (err) {
+      console.error('Error fetching telemetry from SQLite:', err);
+      let list = this.telemetryLogs;
+      if (deviceId) {
+        list = list.filter(e => e.deviceId === deviceId);
+      }
+      if (date) {
+        list = list.filter(e => e.timestamp.startsWith(date));
+      }
+      if (type) {
+        list = list.filter(e => e.type === type);
+      }
+      return list.slice(-limit).reverse();
     }
-    return list.slice(-limit).reverse();
   }
 
   public getActiveSession(deviceId: string): ActiveSession | undefined {

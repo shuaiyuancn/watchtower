@@ -126,7 +126,7 @@ export default function App() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('windows-pc');
   const [telemetry, setTelemetry] = useState<TelemetryEvent[]>([]);
   const [wsConnected, setWsConnected] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'monitor' | 'analytics' | 'limits' | 'apps' | 'telemetry'>('monitor');
+  const [activeTab, setActiveTab] = useState<'monitor' | 'analytics' | 'limits' | 'apps'>('monitor');
   const [notification, setNotification] = useState<string | null>(null);
 
   // Authentication state
@@ -162,6 +162,8 @@ export default function App() {
   const [timelineSearch, setTimelineSearch] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
+  const [telemetrySearch, setTelemetrySearch] = useState<string>('');
+  const [telemetryTypeFilter, setTelemetryTypeFilter] = useState<'ALL' | 'YOUTUBE' | 'IM_MESSAGE'>('ALL');
 
   // New app rule form state
   const [newAppExe, setNewAppExe] = useState('');
@@ -447,6 +449,14 @@ export default function App() {
         if (d.history) setDailyHistory(d.history);
       })
       .catch(() => {});
+
+    // 4. Fetch Deep Telemetry (YouTube & IM) for this device and date
+    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/telemetry?date=${date}&limit=200`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.telemetry) setTelemetry(d.telemetry);
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -462,13 +472,6 @@ export default function App() {
             return match ? curr : d.devices[0].deviceId;
           });
         }
-      })
-      .catch(() => {});
-
-    authFetch('/api/devices/windows-pc/telemetry?limit=50')
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.telemetry) setTelemetry(d.telemetry);
       })
       .catch(() => {});
 
@@ -689,6 +692,39 @@ export default function App() {
     }
     return true;
   });
+
+  // Telemetry filtered by device, date, hour, type, and search query
+  const deviceTelemetry = telemetry.filter((t) => t.deviceId === selectedDeviceId);
+
+  const filteredTelemetry = deviceTelemetry.filter((t) => {
+    // 1. Filter by selectedDate
+    if (selectedDate) {
+      const matchIso = t.timestamp.startsWith(selectedDate);
+      let matchLocal = false;
+      try {
+        matchLocal = new Date(t.timestamp).toLocaleDateString('en-CA') === selectedDate;
+      } catch {}
+      if (!matchIso && !matchLocal) return false;
+    }
+    // 2. Filter by selectedHour if clicked on 24-hour distribution chart
+    if (selectedHour !== null) {
+      const eventHour = new Date(t.timestamp).getHours();
+      if (eventHour !== selectedHour) return false;
+    }
+    // 3. Filter by telemetry type
+    if (telemetryTypeFilter !== 'ALL' && t.type !== telemetryTypeFilter) return false;
+    // 4. Search query
+    if (telemetrySearch.trim()) {
+      const q = telemetrySearch.toLowerCase();
+      const matchText = (t.titleOrText || '').toLowerCase();
+      const matchApp = (t.app || '').toLowerCase();
+      return matchText.includes(q) || matchApp.includes(q);
+    }
+    return true;
+  });
+
+  const youtubeTelemetry = filteredTelemetry.filter((t) => t.type === 'YOUTUBE');
+  const imTelemetry = filteredTelemetry.filter((t) => t.type === 'IM_MESSAGE');
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
@@ -996,16 +1032,6 @@ export default function App() {
             }`}
           >
             <Settings className="w-4 h-4" /> App Rules
-          </button>
-          <button
-            onClick={() => setActiveTab('telemetry')}
-            className={`pb-3 px-4 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
-              activeTab === 'telemetry'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Activity className="w-4 h-4" /> Deep Telemetry (YouTube & IM)
           </button>
         </div>
 
@@ -1489,6 +1515,163 @@ export default function App() {
                 </table>
               </div>
             </div>
+
+            {/* Deep Telemetry Section (YouTube & IM) */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-red-400" />
+                    <h3 className="text-base font-semibold text-white">Deep Telemetry: YouTube & IM Activity</h3>
+                    {selectedHour !== null && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        <Clock className="w-3 h-3" />
+                        {String(selectedHour).padStart(2, '0')}:00 - {String(selectedHour).padStart(2, '0')}:59
+                        <button
+                          onClick={() => setSelectedHour(null)}
+                          className="hover:text-white transition-colors ml-0.5"
+                          title="Clear hour filter"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Isolated audit of YouTube video watch history and IM chat telemetry for <span className="text-slate-200 font-medium font-mono">{selectedDeviceId}</span> on {selectedDate}.
+                  </p>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Type Filter */}
+                  <div className="flex items-center bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+                    <button
+                      onClick={() => setTelemetryTypeFilter('ALL')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors ${
+                        telemetryTypeFilter === 'ALL'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All ({filteredTelemetry.length})
+                    </button>
+                    <button
+                      onClick={() => setTelemetryTypeFilter('YOUTUBE')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                        telemetryTypeFilter === 'YOUTUBE'
+                          ? 'bg-red-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Youtube className="w-3.5 h-3.5" />
+                      YouTube ({youtubeTelemetry.length})
+                    </button>
+                    <button
+                      onClick={() => setTelemetryTypeFilter('IM_MESSAGE')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                        telemetryTypeFilter === 'IM_MESSAGE'
+                          ? 'bg-emerald-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      IM Chat ({imTelemetry.length})
+                    </button>
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search title, message, app..."
+                      value={telemetrySearch}
+                      onChange={(e) => setTelemetrySearch(e.target.value)}
+                      className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl pl-9 pr-3 py-2 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Telemetry Grid / List */}
+              <div className={`grid gap-6 ${telemetryTypeFilter === 'ALL' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+                {/* YouTube Column */}
+                {(telemetryTypeFilter === 'ALL' || telemetryTypeFilter === 'YOUTUBE') && (
+                  <div className="flex flex-col bg-slate-950/40 border border-slate-800/80 rounded-xl p-4">
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Youtube className="w-4 h-4 text-red-500" />
+                        <h4 className="text-sm font-semibold text-white">YouTube Watch History</h4>
+                      </div>
+                      <span className="text-xs text-slate-500 font-medium">
+                        {youtubeTelemetry.length} {youtubeTelemetry.length === 1 ? 'video' : 'videos'}
+                      </span>
+                    </div>
+
+                    <div className="overflow-y-auto max-h-[420px] flex flex-col gap-2 pr-1">
+                      {youtubeTelemetry.map((t) => (
+                        <div key={t.id} className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-xl hover:border-slate-700 transition-colors">
+                          <div className="text-sm font-medium text-slate-100 break-words">{t.titleOrText}</div>
+                          {t.details?.channel && (
+                            <div className="text-xs text-red-400/90 font-medium mt-1">
+                              Channel: {t.details.channel}
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
+                            <span>Browser: <span className="text-slate-300 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{t.app}</span></span>
+                            <span className="font-mono">{new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {youtubeTelemetry.length === 0 && (
+                        <div className="text-xs text-slate-500 italic py-10 text-center flex flex-col items-center gap-2">
+                          <Youtube className="w-7 h-7 text-slate-700 opacity-60" />
+                          <span>No YouTube watch telemetry recorded for this time range.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* IM Message Column */}
+                {(telemetryTypeFilter === 'ALL' || telemetryTypeFilter === 'IM_MESSAGE') && (
+                  <div className="flex flex-col bg-slate-950/40 border border-slate-800/80 rounded-xl p-4">
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Send className="w-4 h-4 text-emerald-400" />
+                        <h4 className="text-sm font-semibold text-white">IM Messages & Chat Telemetry</h4>
+                      </div>
+                      <span className="text-xs text-slate-500 font-medium">
+                        {imTelemetry.length} {imTelemetry.length === 1 ? 'message' : 'messages'}
+                      </span>
+                    </div>
+
+                    <div className="overflow-y-auto max-h-[420px] flex flex-col gap-2 pr-1">
+                      {imTelemetry.map((t) => (
+                        <div key={t.id} className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-xl hover:border-slate-700 transition-colors">
+                          <div className="text-sm font-medium text-slate-200 break-words">"{t.titleOrText}"</div>
+                          <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-400 font-medium font-mono text-[11px]">
+                              {t.app}
+                            </span>
+                            <span className="font-mono">{new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {imTelemetry.length === 0 && (
+                        <div className="text-xs text-slate-500 italic py-10 text-center flex flex-col items-center gap-2">
+                          <Send className="w-7 h-7 text-slate-700 opacity-60" />
+                          <span>No IM chat telemetry recorded for this time range.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -1786,61 +1969,6 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 4: DEEP TELEMETRY (YOUTUBE & IM) */}
-        {activeTab === 'telemetry' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* YouTube Activity */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col">
-              <div className="flex items-center gap-2 mb-4">
-                <Youtube className="w-5 h-5 text-red-500" />
-                <h2 className="text-base font-semibold text-white">YouTube Watch History (Tab Tracking)</h2>
-              </div>
-              <div className="flex-1 overflow-y-auto max-h-[500px] flex flex-col gap-2">
-                {telemetry.filter((t) => t.type === 'YOUTUBE').map((t) => (
-                  <div key={t.id} className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-xl">
-                    <div className="text-sm font-medium text-slate-100">{t.titleOrText}</div>
-                    <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
-                      <span>Browser: <span className="text-slate-400 font-mono">{t.app}</span></span>
-                      <span>{new Date(t.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-                ))}
-                {telemetry.filter((t) => t.type === 'YOUTUBE').length === 0 && (
-                  <div className="text-xs text-slate-500 italic py-8 text-center">
-                    No YouTube video telemetry received yet.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* IM Message Activity */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col">
-              <div className="flex items-center gap-2 mb-4">
-                <Send className="w-5 h-5 text-emerald-400" />
-                <h2 className="text-base font-semibold text-white">IM Messages & Chat Telemetry</h2>
-              </div>
-              <div className="flex-1 overflow-y-auto max-h-[500px] flex flex-col gap-2">
-                {telemetry.filter((t) => t.type === 'IM_MESSAGE').map((t) => (
-                  <div key={t.id} className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-xl">
-                    <div className="text-sm font-medium text-slate-200">"{t.titleOrText}"</div>
-                    <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-400 font-medium">
-                        {t.app}
-                      </span>
-                      <span>{new Date(t.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-                ))}
-                {telemetry.filter((t) => t.type === 'IM_MESSAGE').length === 0 && (
-                  <div className="text-xs text-slate-500 italic py-8 text-center">
-                    No IM chat message telemetry received yet.
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         )}

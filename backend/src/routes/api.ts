@@ -232,9 +232,11 @@ export function registerApiRoutes(
   });
 
   // Get telemetry history (YouTube & IM)
-  server.get<{ Params: { id: string }; Querystring: { limit?: string; type?: string } }>('/api/devices/:id/telemetry', async (req) => {
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
-    const logs = store.getTelemetry(req.params.id, limit);
+  server.get<{ Params: { id: string }; Querystring: { limit?: string; type?: string; date?: string } }>('/api/devices/:id/telemetry', async (req) => {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 100;
+    const date = req.query.date;
+    const type = req.query.type;
+    const logs = store.getTelemetry(req.params.id, limit, date, type);
     return { telemetry: logs };
   });
 

@@ -104,10 +104,32 @@ describe('Watchtower SQLite Store', () => {
       details: { channel: 'Khan Academy' }
     });
 
-    const logs = store.getTelemetry('child-pc', 10);
-    expect(logs.length).toBe(1);
-    expect(logs[0].type).toBe('YOUTUBE');
-    expect(logs[0].titleOrText).toContain('Math Tutorial');
+    // Record telemetry for another machine
+    store.recordTelemetry({
+      deviceId: 'laptop-pc',
+      timestamp: '2026-09-01T10:00:00.000Z',
+      type: 'IM_MESSAGE',
+      app: 'discord.exe',
+      titleOrText: 'Hello from laptop',
+      details: {}
+    });
+
+    // child-pc query should NOT include laptop-pc events
+    const childLogs = store.getTelemetry('child-pc', 10);
+    expect(childLogs.length).toBe(1);
+    expect(childLogs[0].deviceId).toBe('child-pc');
+
+    // laptop-pc query should only return its own event
+    const laptopLogs = store.getTelemetry('laptop-pc', 10);
+    expect(laptopLogs.length).toBe(1);
+    expect(laptopLogs[0].deviceId).toBe('laptop-pc');
+    expect(laptopLogs[0].type).toBe('IM_MESSAGE');
+
+    // Date filtering test
+    const pastDateLogs = store.getTelemetry('laptop-pc', 10, '2026-09-01');
+    expect(pastDateLogs.length).toBe(1);
+    const nonExistentDateLogs = store.getTelemetry('laptop-pc', 10, '2025-01-01');
+    expect(nonExistentDateLogs.length).toBe(0);
 
     store.close();
 
@@ -116,6 +138,7 @@ describe('Watchtower SQLite Store', () => {
     const persistedLogs = newStore.getTelemetry('child-pc', 10);
     expect(persistedLogs.length).toBe(1);
     expect(persistedLogs[0].titleOrText).toBe('Math Tutorial - Khan Academy');
+    expect(persistedLogs[0].deviceId).toBe('child-pc');
     newStore.close();
   });
 
