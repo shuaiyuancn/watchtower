@@ -7,6 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod config;
 mod enforcer;
 mod notifier;
+mod single_instance;
 mod sync;
 mod telemetry;
 mod tracker;
@@ -49,6 +50,15 @@ async fn main() {
         )
         .with(fmt_layer)
         .init();
+
+    #[cfg(windows)]
+    let _single_instance_guard = match single_instance::acquire_single_instance("WatchtowerClientDaemonMutex") {
+        Some(guard) => guard,
+        None => {
+            info!("Another instance of Watchtower is already running. Exiting cleanly.");
+            return;
+        }
+    };
 
     info!("🛡️ Starting Project Watchtower Windows 11 Client Daemon v0.1.0");
 

