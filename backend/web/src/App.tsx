@@ -423,7 +423,7 @@ export default function App() {
     };
   };
 
-  const fetchAnalyticsData = (deviceId: string, date: string) => {
+  const fetchAnalyticsData = (deviceId: string, date: string, hour?: number | null) => {
     if (!deviceId || !isAuthenticated) return;
     
     // 1. Fetch Hourly breakdown
@@ -434,8 +434,9 @@ export default function App() {
       })
       .catch(() => {});
 
-    // 2. Fetch Timeline records
-    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/timeline?date=${date}&limit=200`)
+    // 2. Fetch Timeline records (up to 1,000 coalesced events, filtered by hour if selected)
+    const hourParam = (hour !== null && hour !== undefined) ? `&hour=${hour}` : '';
+    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/timeline?date=${date}&limit=1000${hourParam}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.timeline) setTimelineData(d.timeline);
@@ -451,7 +452,7 @@ export default function App() {
       .catch(() => {});
 
     // 4. Fetch Deep Telemetry (YouTube & IM) for this device and date
-    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/telemetry?date=${date}&limit=200`)
+    authFetch(`/api/devices/${encodeURIComponent(deviceId)}/telemetry?date=${date}&limit=1000`)
       .then((r) => r.json())
       .then((d) => {
         if (d.telemetry) setTelemetry(d.telemetry);
@@ -484,9 +485,9 @@ export default function App() {
 
   useEffect(() => {
     if (selectedDeviceId) {
-      fetchAnalyticsData(selectedDeviceId, selectedDate);
+      fetchAnalyticsData(selectedDeviceId, selectedDate, selectedHour);
     }
-  }, [selectedDeviceId, selectedDate, activeTab]);
+  }, [selectedDeviceId, selectedDate, selectedHour, activeTab]);
 
   const currentDevice = devices.find((d) => d.deviceId === selectedDeviceId) || devices[0] || {
     deviceId: selectedDeviceId,

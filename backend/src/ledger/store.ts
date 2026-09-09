@@ -449,14 +449,23 @@ export class WatchtowerStore {
     return { decision, policy, usage };
   }
 
-  public getTimeline(deviceId: string, date: string = this.getTodayDateString(), limit: number = 100): AppActivityLog[] {
+  public getTimeline(deviceId: string, date: string = this.getTodayDateString(), limit: number = 1000, hour?: number): AppActivityLog[] {
     try {
-      const rows = this.db.prepare(`
+      let sql = `
         SELECT id, device_id, app, window_title, category, timestamp, date, hour, duration_seconds
         FROM app_activity_logs
         WHERE device_id = ? AND date = ?
-        ORDER BY timestamp ASC;
-      `).all(deviceId, date) as Array<{
+      `;
+      const params: (string | number)[] = [deviceId, date];
+
+      if (hour !== undefined && hour !== null) {
+        sql += ` AND hour = ?\n`;
+        params.push(hour);
+      }
+
+      sql += ` ORDER BY timestamp ASC;`;
+
+      const rows = this.db.prepare(sql).all(...params) as Array<{
         id: string;
         device_id: string;
         app: string;

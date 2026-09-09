@@ -258,6 +258,14 @@ describe('Watchtower SQLite Store', () => {
     const history = store.getDailyHistory('child-pc', 7);
     expect(history.length).toBeGreaterThanOrEqual(1);
     expect(history[0].totalActiveSeconds).toBe(50);
+
+    // 4. Test getTimeline with hour filter
+    const timelineThisHour = store.getTimeline('child-pc', today, 1000, currentHour);
+    expect(timelineThisHour.length).toBe(2);
+
+    const otherHour = (currentHour + 5) % 24;
+    const timelineOtherHour = store.getTimeline('child-pc', today, 1000, otherHour);
+    expect(timelineOtherHour.length).toBe(0);
   });
 
   it('groups continuing app heartbeats together in timeline rather than creating duplicate 3s rows', () => {

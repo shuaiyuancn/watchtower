@@ -241,11 +241,13 @@ export function registerApiRoutes(
   });
 
   // Get chronological app activity timeline for a date
-  server.get<{ Params: { id: string }; Querystring: { date?: string; limit?: string } }>('/api/devices/:id/timeline', async (req) => {
+  server.get<{ Params: { id: string }; Querystring: { date?: string; limit?: string; hour?: string } }>('/api/devices/:id/timeline', async (req) => {
     const date = req.query.date || new Date().toISOString().split('T')[0];
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 100;
-    const timeline = store.getTimeline(req.params.id, date, limit);
-    return { timeline, date };
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 1000;
+    const hour = req.query.hour !== undefined ? parseInt(req.query.hour, 10) : undefined;
+    const parsedHour = hour !== undefined && !isNaN(hour) ? hour : undefined;
+    const timeline = store.getTimeline(req.params.id, date, limit, parsedHour);
+    return { timeline, date, hour: parsedHour };
   });
 
   // Get 24-hour distribution breakdown for a date
