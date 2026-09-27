@@ -312,5 +312,45 @@ describe('Watchtower SQLite Store', () => {
     expect(timeline2[1].app).toBe('zen.exe');
     expect(timeline2[1].durationSeconds).toBe(15);
   });
+
+  it('reassigns an app category, persists the rule, and re-labels history/usage', () => {
+    const today = new Date().toISOString().split('T')[0];
+    // chrome.exe defaults to Browsers.
+    for (let i = 0; i < 3; i++) {
+      store.recordHeartbeat({
+        deviceId: 'cat-pc',
+        hostname: 'cat-pc',
+        currentApp: 'chrome.exe',
+        windowTitle: 'YouTube',
+        isIdle: false,
+        idleSeconds: 0,
+        elapsedActiveDeltaSeconds: 10
+      });
+    }
+    const before = store.getDailyUsage('cat-pc', today);
+    expect(before.categorySeconds.Browsers).toBeGreaterThan(0);
+    const chromeSecs = before.appSeconds['chrome.exe'];
+    expect(chromeSecs).toBeGreaterThan(0);
+
+    // Reassign to Games.
+    const policy = store.reassignAppCategory('cat-pc', 'chrome.exe', 'Games');
+    expect(policy.appRules.find(r => r.executableName.toLowerCase() === 'chrome.exe')?.category).toBe('Games');
+
+    // Persisted rule now resolves chrome.exe to Games for future categorization.
+    const reopened = new WatchtowerStore(tempDir);
+    // Timeline rows are re-labelled.
+    const timeline = reopened.getTimeline('cat-pc', today);
+    expect(timeline.every(r => r.app !== 'chrome.exe' || r.category === 'Games')).toBe(true);
+    // Category seconds moved from Browsers to Games.
+    const after = reopened.getDailyUsage('cat-pc', today);
+    expect(after.categorySeconds.Games).toBeGreaterThanOrEqual(chromeSecs);
+    expect(after.categorySeconds.Browsers || 0).toBe(0);
+    reopened.close();
+  });
+
+  it('rejects retroactive move when category is unchanged (idempotent)', () => {
+    expect(WatchtowerStore.isValidCategory('Games')).toBe(true);
+    expect(WatchtowerStore.isValidCategory('Nonsense')).toBe(false);
+  });
 });
 

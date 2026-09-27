@@ -641,6 +641,71 @@ export class WatchtowerStore {
     }
   }
 
+  private static readonly VALID_CATEGORIES: AppCategory[] = [
+    'Games', 'Browsers', 'Social', 'Media', 'Education', 'Productivity', 'System', 'Other'
+  ];
+
+  public static isValidCategory(c: string): c is AppCategory {
+    return (WatchtowerStore.VALID_CATEGORIES as string[]).includes(c);
+  }
+
+  /**
+   * Persist an app -> category override on the device policy and retroactively
+   * re-label stored activity so the timeline and category totals reflect it.
+   */
+  public reassignAppCategory(deviceId: string, app: string, newCategory: AppCategory): DevicePolicy {
+    const norm = app.trim().toLowerCase();
+    const policy = this.getPolicy(deviceId);
+    const oldCategory = resolveAppCategory(norm, policy).category;
+
+    // Upsert a policy rule (checked before the default knowledge base).
+    const existing = policy.appRules.find(r => r.executableName.toLowerCase() === norm);
+    if (existing) {
+      existing.category = newCategory;
+    } else {
+      const known = DEFAULT_APP_RULES.find(r => r.executableName.toLowerCase() === norm);
+      policy.appRules.push({
+        executableName: app,
+        displayName: known?.displayName || app,
+        category: newCategory,
+        ...(known?.dailyLimitSeconds ? { dailyLimitSeconds: known.dailyLimitSeconds } : {}),
+        ...(known?.isBlockedAlways ? { isBlockedAlways: known.isBlockedAlways } : {})
+      });
+    }
+    this.updatePolicy(policy);
+
+    if (oldCategory === newCategory) {
+      return policy;
+    }
+
+    // Re-label historical activity logs for this app.
+    try {
+      this.db.prepare(
+        'UPDATE app_activity_logs SET category = ? WHERE device_id = ? AND LOWER(app) = ?;'
+      ).run(newCategory, deviceId, norm);
+    } catch (err) {
+      console.error('Failed to re-label activity logs during category reassign:', err);
+    }
+
+    // Move this app's seconds between category buckets in every daily summary.
+    for (const [key, usage] of this.dailyUsage) {
+      if (usage.deviceId !== deviceId) continue;
+      const secs = usage.appSeconds[norm] || 0;
+      if (secs <= 0) continue;
+      usage.categorySeconds[oldCategory] = Math.max(0, (usage.categorySeconds[oldCategory] || 0) - secs);
+      usage.categorySeconds[newCategory] = (usage.categorySeconds[newCategory] || 0) + secs;
+      this.persistDailyUsage(usage);
+    }
+
+    // Reflect on the live session if this app is currently foreground.
+    const session = this.activeSessions.get(deviceId);
+    if (session && (session.currentApp || '').trim().toLowerCase() === norm) {
+      session.category = newCategory;
+    }
+
+    return policy;
+  }
+
   public addBonusTime(deviceId: string, extraSeconds: number): DevicePolicy {
     const policy = this.getPolicy(deviceId);
     policy.bonusSecondsToday = (policy.bonusSecondsToday || 0) + extraSeconds;

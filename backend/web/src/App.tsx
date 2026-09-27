@@ -161,6 +161,7 @@ export default function App() {
   const [dailyHistory, setDailyHistory] = useState<DailyUsageSummary[]>([]);
   const [timelineSearch, setTimelineSearch] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [savingCategoryApp, setSavingCategoryApp] = useState<string | null>(null);
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
   const [telemetrySearch, setTelemetrySearch] = useState<string>('');
   const [telemetryTypeFilter, setTelemetryTypeFilter] = useState<'ALL' | 'YOUTUBE' | 'IM_MESSAGE'>('ALL');
@@ -558,6 +559,31 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleChangeAppCategory = async (app: string, category: string) => {
+    setSavingCategoryApp(app);
+    try {
+      const res = await authFetch(`/api/devices/${currentDevice.deviceId}/app-category`, {
+        method: 'POST',
+        body: JSON.stringify({ app, category })
+      });
+      if (res.ok) {
+        showNotification(`Set ${app} → ${category}`);
+        // Reflect immediately: re-label every matching row locally, then refresh.
+        setTimelineData((prev) =>
+          prev.map((r) => (r.app.toLowerCase() === app.toLowerCase() ? { ...r, category } : r))
+        );
+        fetchAnalyticsData(currentDevice.deviceId, selectedDate, selectedHour);
+      } else {
+        showNotification('Failed to update category');
+      }
+    } catch (e) {
+      console.error(e);
+      showNotification('Failed to update category');
+    } finally {
+      setSavingCategoryApp(null);
     }
   };
 
@@ -1506,9 +1532,17 @@ export default function App() {
                             </div>
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
-                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${getCategoryBadgeClass(log.category)}`}>
-                              {log.category}
-                            </span>
+                            <select
+                              value={log.category}
+                              disabled={savingCategoryApp === log.app}
+                              onChange={(e) => handleChangeAppCategory(log.app, e.target.value)}
+                              title="Change category for this app (saved and applied to history)"
+                              className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${getCategoryBadgeClass(log.category)}`}
+                            >
+                              {['Games', 'Browsers', 'Social', 'Media', 'Education', 'Productivity', 'System', 'Other'].map((c) => (
+                                <option key={c} value={c} className="bg-slate-900 text-slate-200">{c}</option>
+                              ))}
+                            </select>
                           </td>
                           <td className="py-3 px-4 text-slate-300 max-w-md truncate" title={log.windowTitle}>
                             {log.windowTitle || '<No title>'}

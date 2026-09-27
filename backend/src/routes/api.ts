@@ -304,6 +304,23 @@ export function registerApiRoutes(
     return { success: sent };
   });
 
+  // Reassign an app's category (persisted on the policy; re-labels history)
+  server.post<{ Params: { id: string }; Body: { app: string; category: string } }>('/api/devices/:id/app-category', async (req, reply) => {
+    const { app, category } = req.body || {};
+    if (typeof app !== 'string' || !app.trim() || app.length > 260) {
+      return reply.code(400).send({ error: 'app must be a non-empty string (max 260 chars)' });
+    }
+    if (typeof category !== 'string' || !WatchtowerStore.isValidCategory(category)) {
+      return reply.code(400).send({ error: 'category must be one of the valid app categories' });
+    }
+
+    const policy = store.reassignAppCategory(req.params.id, app, category);
+    wsHub.broadcastPolicyUpdate(policy);
+    notifySlack(`🏷️ Watchtower category for *${app}* set to *${category}* on *${req.params.id}*.`);
+
+    return { success: true, app, category };
+  });
+
   // Get telemetry history (YouTube & IM)
   server.get<{ Params: { id: string }; Querystring: { limit?: string; type?: string; date?: string } }>('/api/devices/:id/telemetry', async (req) => {
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 100;
