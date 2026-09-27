@@ -144,6 +144,7 @@ export function registerApiRoutes(
     }
 
     clearRateLimit(ip);
+    notifySlack(`✅ Watchtower dashboard login from ${ip}.`);
     const token = store.createSessionToken();
     return { success: true, token };
   });
@@ -236,6 +237,12 @@ export function registerApiRoutes(
     store.updatePolicy(updated);
     wsHub.broadcastPolicyUpdate(updated);
 
+    const limitMin = Math.round((updated.dailyGlobalLimitSeconds || 0) / 60);
+    const bedtime = updated.bedtime?.enabled
+      ? `, bedtime ${String(updated.bedtime.startHour).padStart(2, '0')}:${String(updated.bedtime.startMinute).padStart(2, '0')}–${String(updated.bedtime.endHour).padStart(2, '0')}:${String(updated.bedtime.endMinute).padStart(2, '0')}`
+      : '';
+    notifySlack(`⚙️ Watchtower quotas updated for *${req.params.id}* (daily limit ${limitMin}m${bedtime}).`);
+
     return { success: true, policy: updated };
   });
 
@@ -259,6 +266,7 @@ export function registerApiRoutes(
     });
 
     wsHub.broadcastPolicyUpdate(policy);
+    notifySlack(`➕ Watchtower granted +${extraMinutes}m to *${req.params.id}* (bonus today: ${Math.round((policy.bonusSecondsToday || 0) / 60)}m).`);
 
     return { success: true, bonusSecondsToday: policy.bonusSecondsToday };
   });
@@ -274,6 +282,7 @@ export function registerApiRoutes(
     });
 
     wsHub.broadcastPolicyUpdate(policy);
+    notifySlack(`${locked ? '🔒' : '🔓'} Watchtower emergency lock ${locked ? 'ENABLED' : 'disabled'} for *${req.params.id}*.`);
 
     return { success: true, emergencyLock: policy.emergencyLock };
   });
@@ -290,6 +299,7 @@ export function registerApiRoutes(
       targetApp: executableName,
       message: `${executableName} closed by parent command.`
     });
+    notifySlack(`🗡️ Watchtower kill-app *${executableName}* sent to *${req.params.id}* (${sent ? 'delivered' : 'device offline'}).`);
 
     return { success: sent };
   });
