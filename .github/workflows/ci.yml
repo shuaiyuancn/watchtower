@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend deps (workspace)
+        run: npm ci
+
+      - name: Install dashboard deps
+        run: npm ci --prefix backend/web
+
+      - name: Build backend + dashboard
+        run: npm run build:backend
+
+      - name: Run backend tests
+        run: npm run test:backend
+
+  client:
+    name: client
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+
+      - name: Build client (debug, compile check)
+        working-directory: ./client
+        run: cargo build

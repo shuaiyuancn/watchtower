@@ -13,11 +13,12 @@ import {
   HourlyUsageSummary,
   AppCategory
 } from '../types.js';
-import { 
-  DEFAULT_APP_RULES, 
-  evaluateEnforcement, 
-  resolveAppCategory 
+import {
+  DEFAULT_APP_RULES,
+  evaluateEnforcement,
+  resolveAppCategory
 } from './rules.js';
+import { notifySlack } from '../notify/slack.js';
 
 export interface AppDatabaseLegacy {
   policies?: Record<string, DevicePolicy>;
@@ -191,6 +192,9 @@ export class WatchtowerStore {
           '     Set ADMIN_PASSWORD to control this value on first boot.\n' +
           '==================================================================\n'
         );
+        // Deliver the one-time password to the private Slack channel so it can
+        // be retrieved without digging through host logs.
+        notifySlack(`🔑 Watchtower generated a new dashboard password (first boot / reset):\n\`${generated}\`\nStore it and change it from the dashboard.`);
       }
     }
 

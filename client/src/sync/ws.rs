@@ -11,13 +11,49 @@ use crate::telemetry::{inspect_im_activity, inspect_youtube_activity};
 use crate::tracker::{get_foreground_info, get_idle_time_seconds, ForegroundInfo};
 use crate::types::{ClientHeartbeat, ServerMessage};
 
+/// Returns true if the host portion of a ws(s) URL is a loopback address.
+fn is_loopback_host(url: &str) -> bool {
+    let after_scheme = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url);
+    let host = after_scheme.split(['/', '?']).next().unwrap_or("");
+    host.starts_with("localhost")
+        || host.starts_with("127.0.0.1")
+        || host.starts_with("[::1]")
+}
+
+/// Build the WebSocket endpoint: enforce wss:// for remote hosts (M5) and
+/// append the device auth token when present (C1).
+fn build_ws_endpoint(config: &ClientConfig) -> String {
+    let mut base = config.server_url.trim_end_matches('/').to_string();
+
+    if base.starts_with("ws://") && !is_loopback_host(&base) && !config.allow_insecure {
+        warn!("Upgrading insecure ws:// to wss:// for remote host (set allow_insecure=true to override).");
+        base = format!("wss://{}", &base["ws://".len()..]);
+    }
+
+    let mut endpoint = format!("{}/{}", base, config.device_id);
+    if let Some(token) = config.auth_token.as_deref() {
+        if !token.is_empty() {
+            endpoint = format!("{}?token={}", endpoint, token);
+        }
+    }
+    endpoint
+}
+
 pub async fn run_sync_loop(config: ClientConfig) {
-    let ws_endpoint = format!("{}/{}", config.server_url.trim_end_matches('/'), config.device_id);
+    let ws_endpoint = build_ws_endpoint(&config);
     let mut last_app = String::new();
     let mut last_active_ts = std::time::Instant::now();
 
+    let log_endpoint = ws_endpoint
+        .split_once("?token=")
+        .map(|(base, _)| format!("{}?token=***", base))
+        .unwrap_or_else(|| ws_endpoint.clone());
+
     loop {
-        info!("Connecting to Watchtower Server at: {}", ws_endpoint);
+        info!("Connecting to Watchtower Server at: {}", log_endpoint);
 
         match connect_async(&ws_endpoint).await {
             Ok((ws_stream, _)) => {

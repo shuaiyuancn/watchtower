@@ -6,7 +6,16 @@ use std::path::Path;
 pub struct ClientConfig {
     pub server_url: String, // e.g. "ws://127.0.0.1:4000/ws/client" or "wss://your-railway.up.railway.app/ws/client"
     pub device_id: String,
+    #[serde(default)]
     pub api_key: Option<String>,
+    /// Device-bound token issued at enrollment. Sent to the server so it can
+    /// verify this device when REQUIRE_DEVICE_AUTH is enabled (C1).
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    /// Allow an insecure ws:// connection to a non-loopback host. Off by
+    /// default: remote hosts are upgraded to wss:// (M5).
+    #[serde(default)]
+    pub allow_insecure: bool,
     pub heartbeat_interval_secs: u64,
 }
 
@@ -20,6 +29,8 @@ impl Default for ClientConfig {
             server_url: "ws://127.0.0.1:4000/ws/client".to_string(),
             device_id: hostname,
             api_key: None,
+            auth_token: None,
+            allow_insecure: false,
             heartbeat_interval_secs: 3,
         }
     }

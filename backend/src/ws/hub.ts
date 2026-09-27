@@ -1,6 +1,7 @@
 import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { WatchtowerStore } from '../ledger/store.js';
+import { notifySlack } from '../notify/slack.js';
 import {
   ClientHeartbeatPayload,
   ServerCommand,
@@ -44,8 +45,12 @@ export class WebSocketHub {
   }
 
   public registerClient(deviceId: string, ws: WebSocket): void {
+    const wasConnected = this.clientSockets.has(deviceId);
     this.clientSockets.set(deviceId, ws);
     console.log(`[WS Hub] Device client connected: ${deviceId}`);
+    if (!wasConnected) {
+      notifySlack(`🟢 Watchtower device connected: *${deviceId}*`);
+    }
 
     // Send initial policy sync immediately upon connection
     const policy = this.store.getPolicy(deviceId);
@@ -90,8 +95,13 @@ export class WebSocketHub {
 
     ws.on('close', () => {
       console.log(`[WS Hub] Device client disconnected: ${deviceId}`);
-      this.clientSockets.delete(deviceId);
-      
+      // Only clear if this socket is still the registered one (avoid races with
+      // a reconnect that already replaced it).
+      if (this.clientSockets.get(deviceId) === ws) {
+        this.clientSockets.delete(deviceId);
+        notifySlack(`🔴 Watchtower device disconnected: *${deviceId}*`);
+      }
+
       const session = this.store.getActiveSession(deviceId);
       if (session) {
         session.connected = false;
