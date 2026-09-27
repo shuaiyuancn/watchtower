@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } fro
 import { WatchtowerStore } from '../ledger/store.js';
 import { WebSocketHub } from '../ws/hub.js';
 import { DevicePolicy } from '../types.js';
+import { notifySlack } from '../notify/slack.js';
 
 // Rate limiting: exponential backoff plus a hard lockout after repeated failures.
 const BASE_COOLDOWN_MS = 5000;      // cooldown after the first failure
@@ -67,6 +68,9 @@ function recordFailedAttempt(ip: string): number {
   const count = existing && now - existing.lastFailedAt <= ATTEMPT_WINDOW_MS ? existing.count + 1 : 1;
   const cooldown = count >= HARD_LOCKOUT_THRESHOLD ? HARD_LOCKOUT_MS : cooldownFor(count);
   attemptsByIp.set(ip, { count, lastFailedAt: now, lockedUntil: now + cooldown });
+  if (count === HARD_LOCKOUT_THRESHOLD) {
+    notifySlack(`🔒 Watchtower auth lockout: ${count} failed attempts from ${ip} — locked for ${Math.ceil(cooldown / 60000)} min.`);
+  }
   return Math.ceil(cooldown / 1000);
 }
 
@@ -130,6 +134,7 @@ export function registerApiRoutes(
     const isValid = store.verifyPassword(password);
     if (!isValid) {
       const retryAfter = recordFailedAttempt(ip);
+      notifySlack(`⚠️ Failed Watchtower dashboard login from ${ip}.`);
       reply.header('Retry-After', retryAfter);
       return reply.code(401).send({
         success: false,
@@ -203,6 +208,7 @@ export function registerApiRoutes(
     store.setPassword(newPassword);
     // Invalidate all existing sessions, then issue a fresh token for this client.
     store.revokeAllSessions();
+    notifySlack(`🔧 Watchtower dashboard password changed from ${ip}. All sessions were logged out.`);
     const newToken = store.createSessionToken();
     return { success: true, token: newToken, message: 'Password successfully updated' };
   });
@@ -497,6 +503,7 @@ Write-Host " Watchtower Client successfully installed, running in background, an
     const isValid = store.verifyPassword(password);
     if (!isValid) {
       const retryAfter = recordFailedAttempt(ip);
+      notifySlack(`⚠️ Failed Watchtower uninstall authentication from ${ip}.`);
       reply.header('Retry-After', retryAfter);
       return reply.code(401).send({
         success: false,
@@ -506,6 +513,7 @@ Write-Host " Watchtower Client successfully installed, running in background, an
     }
 
     clearRateLimit(ip);
+    notifySlack(`🗑️ Watchtower uninstall payload issued to ${ip}.`);
 
     const removalScript = `# Dynamic Watchtower Removal Payload
 $ErrorActionPreference = 'SilentlyContinue'

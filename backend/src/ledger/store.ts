@@ -13,11 +13,12 @@ import {
   HourlyUsageSummary,
   AppCategory
 } from '../types.js';
-import { 
-  DEFAULT_APP_RULES, 
-  evaluateEnforcement, 
-  resolveAppCategory 
+import {
+  DEFAULT_APP_RULES,
+  evaluateEnforcement,
+  resolveAppCategory
 } from './rules.js';
+import { notifySlack } from '../notify/slack.js';
 
 export interface AppDatabaseLegacy {
   policies?: Record<string, DevicePolicy>;
@@ -191,6 +192,9 @@ export class WatchtowerStore {
           '     Set ADMIN_PASSWORD to control this value on first boot.\n' +
           '==================================================================\n'
         );
+        // Deliver the one-time password to the private Slack channel so it can
+        // be retrieved without digging through host logs.
+        notifySlack(`🔑 Watchtower generated a new dashboard password (first boot / reset):\n\`${generated}\`\nStore it and change it from the dashboard.`);
       }
     }
 
@@ -200,11 +204,16 @@ export class WatchtowerStore {
     if (!this.getSetting('session_epoch')) {
       this.setSetting('session_epoch', '1');
     }
-    if (!this.getSetting('device_enrollment_secret')) {
-      const envSecret = process.env.DEVICE_ENROLLMENT_SECRET;
-      this.setSetting('device_enrollment_secret', envSecret && envSecret.length >= 16
-        ? envSecret
-        : crypto.randomBytes(24).toString('hex'));
+    // DEVICE_ENROLLMENT_SECRET, when provided, is authoritative on every boot
+    // so the value is predictable for operators; otherwise keep the existing
+    // one or generate a random secret on first boot.
+    const envSecret = process.env.DEVICE_ENROLLMENT_SECRET;
+    if (envSecret && envSecret.length >= 16) {
+      if (this.getSetting('device_enrollment_secret') !== envSecret) {
+        this.setSetting('device_enrollment_secret', envSecret);
+      }
+    } else if (!this.getSetting('device_enrollment_secret')) {
+      this.setSetting('device_enrollment_secret', crypto.randomBytes(24).toString('hex'));
     }
   }
 

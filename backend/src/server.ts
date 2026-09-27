@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import { WatchtowerStore } from './ledger/store.js';
 import { WebSocketHub } from './ws/hub.js';
 import { registerApiRoutes } from './routes/api.js';
+import { notifySlack } from './notify/slack.js';
 
 dotenv.config();
 
@@ -80,6 +81,7 @@ export async function createServer() {
       if (process.env.REQUIRE_DEVICE_AUTH === 'true') {
         const token = req.query?.token || (req.headers['x-device-token'] as string) || '';
         if (!store.verifyDeviceToken(deviceId, token)) {
+          notifySlack(`🚫 Rejected unauthenticated Watchtower device connection: *${deviceId}*`);
           socket.close(4001, 'Unauthorized device');
           return;
         }
@@ -134,6 +136,7 @@ if (process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.
           app.log.error(err);
           process.exit(1);
         }
+        notifySlack(`🛰️ Watchtower server started at ${address}.`);
         console.log(`\n======================================================`);
         console.log(` 🛡️  Watchtower Server running at: ${address}`);
         console.log(` 📡 WebSocket Client Endpoint: ws://${HOST}:${PORT}/ws/client/:deviceId`);
