@@ -102,6 +102,31 @@ podman run -d -p 4000:4000 -v watchtower-data:/app/data --name watchtower watcht
 
 ---
 
+### 🔐 Security configuration
+
+Watchtower no longer ships a hardcoded `0000` password. On first boot it seeds the dashboard password from `ADMIN_PASSWORD` (if set and ≥ 8 chars); otherwise it **generates a random password and prints it once to the server logs** — grab it there, then change it from the dashboard.
+
+| Env var | Purpose | Default |
+|---|---|---|
+| `ADMIN_PASSWORD` | Dashboard password on first boot (min 8 chars) | random (logged once) |
+| `RESET_PASSWORD=true` | Re-seed the password on next boot (uses `ADMIN_PASSWORD` or a new random one) | off |
+| `SESSION_TTL_HOURS` | Dashboard session token lifetime | `12` |
+| `ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the dashboard origin(s) | reflect (no credentials) |
+| `TRUST_PROXY` | Set to `false` if the server is exposed directly with no proxy | on (Railway proxy) |
+| `TRUST_PROXY_HOPS` | Number of trusted proxy hops for client-IP resolution (rate limiting) | `1` |
+| `DEVICE_ENROLLMENT_SECRET` | Secret required to enroll a client device (min 16 chars) | random |
+| `REQUIRE_DEVICE_AUTH=true` | Reject client WebSocket connections without a valid device token | off |
+
+**Device authentication (recommended):** set `REQUIRE_DEVICE_AUTH=true` and a `DEVICE_ENROLLMENT_SECRET`, then install clients with the enrollment key so each device gets a device-bound token:
+
+```powershell
+irm "https://<your-server>/api/install.ps1?key=<DEVICE_ENROLLMENT_SECRET>" | iex
+```
+
+With `REQUIRE_DEVICE_AUTH` off (default), the classic one-liner still works and existing clients keep connecting — enable enforcement only after your devices have been re-enrolled with a key.
+
+---
+
 ---
 
 ### 4. ⚡ Windows 1-Line Client Installation (Recommended)

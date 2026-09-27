@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
@@ -14,17 +15,50 @@ dotenv.config();
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
+// Populate req.ips from X-Forwarded-For. Rate limiting (H1) does NOT trust the
+// client-controlled left-most entry; getClientIp() keys on the proxy-appended
+// hop instead (see routes/api.ts). Set TRUST_PROXY=false to ignore XFF entirely
+// when the server is exposed directly with no proxy.
+function resolveTrustProxy(): boolean {
+  return process.env.TRUST_PROXY !== 'false';
+}
+
 export async function createServer() {
   const app = Fastify({
-    trustProxy: true,
+    trustProxy: resolveTrustProxy(),
     logger: {
       level: process.env.LOG_LEVEL || 'info'
     }
   });
 
+  // Security headers (M3). CSP is scoped to same-origin plus the WS the
+  // dashboard needs; the SPA loads its own bundle/styles from /assets.
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'", 'ws:', 'wss:'],
+        fontSrc: ["'self'", 'data:'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"]
+      }
+    },
+    crossOriginEmbedderPolicy: false
+  });
+
+  // CORS: allowlist via env; reflect otherwise but never with credentials (H4).
+  // Auth is a bearer header, not a cookie, so credentials are not needed.
+  const allowed = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   await app.register(cors, {
-    origin: true,
-    credentials: true
+    origin: allowed.length > 0 ? allowed : true,
+    credentials: false
   });
 
   await app.register(fastifyWebsocket);
@@ -35,16 +69,30 @@ export async function createServer() {
   // Register REST APIs
   registerApiRoutes(app, store, wsHub);
 
-  // WebSocket for Windows 11 Rust Client
-  app.get<{ Params: { deviceId: string } }>('/ws/client/:deviceId', { websocket: true }, (socket, req) => {
-    const deviceId = req.params.deviceId || 'windows-pc';
-    wsHub.registerClient(deviceId, socket);
-  });
+  // WebSocket for Windows 11 Rust Client. Device auth (C1) is enforced when
+  // REQUIRE_DEVICE_AUTH=true; the client presents a device-bound token minted
+  // at enrollment (?token= over wss, or the X-Device-Token header).
+  app.get<{ Params: { deviceId: string }; Querystring: { token?: string } }>(
+    '/ws/client/:deviceId',
+    { websocket: true },
+    (socket, req) => {
+      const deviceId = req.params.deviceId || 'windows-pc';
+      if (process.env.REQUIRE_DEVICE_AUTH === 'true') {
+        const token = req.query?.token || (req.headers['x-device-token'] as string) || '';
+        if (!store.verifyDeviceToken(deviceId, token)) {
+          socket.close(4001, 'Unauthorized device');
+          return;
+        }
+      }
+      wsHub.registerClient(deviceId, socket);
+    }
+  );
 
-  // WebSocket for Parent Web Dashboard
-  app.get<{ Querystring: { token?: string } }>('/ws/dashboard', { websocket: true }, (socket, req) => {
-    const token = req.query?.token || (req.headers['sec-websocket-protocol'] as string) || '';
-    if (!store.verifySessionToken(token)) {
+  // WebSocket for Parent Web Dashboard. Authenticated with a short-lived,
+  // single-use ticket so the session token never appears in a URL (H3).
+  app.get<{ Querystring: { ticket?: string } }>('/ws/dashboard', { websocket: true }, (socket, req) => {
+    const ticket = req.query?.ticket || '';
+    if (!store.consumeWsTicket(ticket)) {
       socket.close(4001, 'Unauthorized');
       return;
     }

@@ -332,13 +332,29 @@ export default function App() {
     }
   };
 
-  const connectWebSocket = () => {
+  const connectWebSocket = async () => {
     const currentToken = token || localStorage.getItem('watchtower_token');
     if (!currentToken) return;
 
+    // Exchange the session token for a short-lived, single-use ticket so the
+    // token never appears in the WebSocket URL (H3).
+    let ticket = '';
+    try {
+      const res = await fetch('/api/auth/ws-ticket', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${currentToken}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      ticket = data.ticket;
+    } catch {
+      return;
+    }
+    if (!ticket) return;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/dashboard?token=${encodeURIComponent(currentToken)}`;
+    const wsUrl = `${protocol}//${host}/ws/dashboard?ticket=${encodeURIComponent(ticket)}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
