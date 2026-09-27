@@ -35,10 +35,19 @@ const TelemetrySchema = z.object({
 const MAX_MSGS_PER_WINDOW = 60;
 const RATE_WINDOW_MS = 10_000;
 
+interface EnforcementState {
+  warn: boolean;
+  kill: boolean;
+  logoff: boolean;
+}
+
 export class WebSocketHub {
   private store: WatchtowerStore;
   private clientSockets: Map<string, WebSocket> = new Map(); // deviceId -> socket
   private dashboardSockets: Set<WebSocket> = new Set(); // connected web dashboards
+  // Last enforcement state per device, so we log only on the rising edge
+  // (limit newly reached) instead of every 3s heartbeat.
+  private enfState: Map<string, EnforcementState> = new Map();
 
   constructor(store: WatchtowerStore) {
     this.store = store;
@@ -131,6 +140,30 @@ export class WebSocketHub {
     });
   }
 
+  private logEnforcementTransitions(
+    deviceId: string,
+    decision: { shouldWarn: boolean; shouldKillApp: boolean; shouldLogoffUser: boolean; reason?: string; warningMessage?: string },
+    currentApp: string
+  ): void {
+    const prev = this.enfState.get(deviceId) || { warn: false, kill: false, logoff: false };
+
+    if (decision.shouldLogoffUser && !prev.logoff) {
+      notifySlack(`⛔ *${deviceId}*: daily limit / curfew reached — forcing logoff.${decision.reason ? ` (${decision.reason})` : ''}`);
+    }
+    if (decision.shouldKillApp && !prev.kill) {
+      notifySlack(`🛑 *${deviceId}*: app limit reached — terminating *${currentApp || 'app'}*.${decision.reason ? ` (${decision.reason})` : ''}`);
+    }
+    if (decision.shouldWarn && !prev.warn) {
+      notifySlack(`⏳ *${deviceId}*: ${decision.warningMessage || '5-minute warning — time almost up.'}`);
+    }
+
+    this.enfState.set(deviceId, {
+      warn: decision.shouldWarn,
+      kill: decision.shouldKillApp,
+      logoff: decision.shouldLogoffUser
+    });
+  }
+
   private handleClientMessage(deviceId: string, msg: any, ws: WebSocket): void {
     if (msg?.type === 'HEARTBEAT') {
       const parsed = HeartbeatSchema.safeParse(msg);
@@ -150,6 +183,9 @@ export class WebSocketHub {
       };
 
       const { decision, policy, usage } = this.store.recordHeartbeat(payload);
+
+      // Log enforcement events on their rising edge only.
+      this.logEnforcementTransitions(deviceId, decision, payload.currentApp);
 
       // Reply back to client with heartbeat ACK and enforcement decision
       const response = {
