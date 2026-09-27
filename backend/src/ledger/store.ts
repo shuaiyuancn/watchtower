@@ -204,11 +204,16 @@ export class WatchtowerStore {
     if (!this.getSetting('session_epoch')) {
       this.setSetting('session_epoch', '1');
     }
-    if (!this.getSetting('device_enrollment_secret')) {
-      const envSecret = process.env.DEVICE_ENROLLMENT_SECRET;
-      this.setSetting('device_enrollment_secret', envSecret && envSecret.length >= 16
-        ? envSecret
-        : crypto.randomBytes(24).toString('hex'));
+    // DEVICE_ENROLLMENT_SECRET, when provided, is authoritative on every boot
+    // so the value is predictable for operators; otherwise keep the existing
+    // one or generate a random secret on first boot.
+    const envSecret = process.env.DEVICE_ENROLLMENT_SECRET;
+    if (envSecret && envSecret.length >= 16) {
+      if (this.getSetting('device_enrollment_secret') !== envSecret) {
+        this.setSetting('device_enrollment_secret', envSecret);
+      }
+    } else if (!this.getSetting('device_enrollment_secret')) {
+      this.setSetting('device_enrollment_secret', crypto.randomBytes(24).toString('hex'));
     }
   }
 
