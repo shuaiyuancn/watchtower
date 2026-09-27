@@ -3,41 +3,75 @@ import { WatchtowerStore } from '../ledger/store.js';
 import { WebSocketHub } from '../ws/hub.js';
 import { DevicePolicy } from '../types.js';
 
-const AUTH_LOCKOUT_MS = 5000; // 5-second cooldown between failed attempts
-const failedAttemptsByIp = new Map<string, number>();
+// Rate limiting: exponential backoff plus a hard lockout after repeated failures.
+const BASE_COOLDOWN_MS = 5000;      // cooldown after the first failure
+const MAX_COOLDOWN_MS = 15 * 60 * 1000; // cap backoff at 15 minutes
+const HARD_LOCKOUT_THRESHOLD = 10;  // failures before an extended lockout
+const HARD_LOCKOUT_MS = 30 * 60 * 1000; // 30-minute lockout once threshold is hit
+const ATTEMPT_WINDOW_MS = 60 * 60 * 1000; // forget failures older than 1h
 
-export function clearAllAuthRateLimits(): void {
-  failedAttemptsByIp.clear();
+interface AttemptRecord {
+  count: number;
+  lastFailedAt: number;
+  lockedUntil: number;
 }
 
+const attemptsByIp = new Map<string, AttemptRecord>();
+
+export function clearAllAuthRateLimits(): void {
+  attemptsByIp.clear();
+}
+
+// Key rate limiting on the hop appended by our own trusted proxy, not the
+// client-controlled left-most X-Forwarded-For entry (H1). req.ips is
+// [socketPeer, ...XFF right-to-left], so index TRUST_PROXY_HOPS (default 1) is
+// the address the nearest trusted proxy reported — which an attacker cannot
+// forge by prepending fake entries. Falls back to the socket when no proxy.
 function getClientIp(req: FastifyRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) {
-    return forwarded.split(',')[0].trim();
+  const rawHops = parseInt(process.env.TRUST_PROXY_HOPS || '1', 10);
+  const hops = Number.isFinite(rawHops) && rawHops >= 0 ? rawHops : 1;
+  const ips = req.ips;
+  if (Array.isArray(ips) && ips.length > 0) {
+    const idx = Math.min(hops, ips.length - 1);
+    return ips[idx] || 'unknown-client';
   }
   return req.ip || req.socket.remoteAddress || 'unknown-client';
 }
 
+function cooldownFor(count: number): number {
+  // 5s, 10s, 20s, 40s ... capped.
+  const ms = BASE_COOLDOWN_MS * Math.pow(2, Math.max(0, count - 1));
+  return Math.min(ms, MAX_COOLDOWN_MS);
+}
+
 function checkAuthRateLimit(ip: string): { allowed: boolean; retryAfter: number } {
-  const lastFailed = failedAttemptsByIp.get(ip);
-  if (!lastFailed) {
+  const rec = attemptsByIp.get(ip);
+  if (!rec) return { allowed: true, retryAfter: 0 };
+
+  // Expire stale records so honest users aren't punished forever.
+  if (Date.now() - rec.lastFailedAt > ATTEMPT_WINDOW_MS) {
+    attemptsByIp.delete(ip);
     return { allowed: true, retryAfter: 0 };
   }
-  const elapsed = Date.now() - lastFailed;
-  if (elapsed < AUTH_LOCKOUT_MS) {
-    const remainingSec = Math.ceil((AUTH_LOCKOUT_MS - elapsed) / 1000);
-    return { allowed: false, retryAfter: remainingSec };
+
+  const now = Date.now();
+  if (rec.lockedUntil > now) {
+    return { allowed: false, retryAfter: Math.ceil((rec.lockedUntil - now) / 1000) };
   }
-  failedAttemptsByIp.delete(ip);
   return { allowed: true, retryAfter: 0 };
 }
 
-function recordFailedAttempt(ip: string): void {
-  failedAttemptsByIp.set(ip, Date.now());
+function recordFailedAttempt(ip: string): number {
+  const now = Date.now();
+  const existing = attemptsByIp.get(ip);
+  const count = existing && now - existing.lastFailedAt <= ATTEMPT_WINDOW_MS ? existing.count + 1 : 1;
+  const cooldown = count >= HARD_LOCKOUT_THRESHOLD ? HARD_LOCKOUT_MS : cooldownFor(count);
+  attemptsByIp.set(ip, { count, lastFailedAt: now, lockedUntil: now + cooldown });
+  return Math.ceil(cooldown / 1000);
 }
 
 function clearRateLimit(ip: string): void {
-  failedAttemptsByIp.delete(ip);
+  attemptsByIp.delete(ip);
 }
 
 export function registerApiRoutes(
@@ -45,6 +79,8 @@ export function registerApiRoutes(
   store: WatchtowerStore,
   wsHub: WebSocketHub
 ): void {
+  // Tokens are only accepted in headers — never query strings, which leak into
+  // access logs, proxies and browser history (H3).
   function extractToken(req: FastifyRequest): string {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -53,17 +89,14 @@ export function registerApiRoutes(
     if (req.headers['x-auth-token']) {
       return String(req.headers['x-auth-token']).trim();
     }
-    const query = (req.query as Record<string, string> | undefined);
-    if (query?.token) {
-      return String(query.token).trim();
-    }
     return '';
   }
 
-  // Hook to protect /api/devices/* routes
+  // Hook to protect /api/devices/* routes. Device enrollment is exempt: it
+  // authenticates with the enrollment secret, not a dashboard session token.
   server.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-    const url = req.raw.url || '';
-    if (url.startsWith('/api/devices')) {
+    const url = (req.raw.url || '').split('?')[0];
+    if (url.startsWith('/api/devices') && url !== '/api/devices/enroll') {
       const token = extractToken(req);
       if (!token || !store.verifySessionToken(token)) {
         return reply.code(401).send({ error: 'Unauthorized. Please unlock the dashboard with your password.' });
@@ -96,12 +129,12 @@ export function registerApiRoutes(
 
     const isValid = store.verifyPassword(password);
     if (!isValid) {
-      recordFailedAttempt(ip);
-      reply.header('Retry-After', 5);
+      const retryAfter = recordFailedAttempt(ip);
+      reply.header('Retry-After', retryAfter);
       return reply.code(401).send({
         success: false,
-        error: 'Incorrect password. Please wait 5s before retrying.',
-        retryAfter: 5
+        error: `Incorrect password. Please wait ${retryAfter}s before retrying.`,
+        retryAfter
       });
     }
 
@@ -114,6 +147,25 @@ export function registerApiRoutes(
     const token = extractToken(req);
     const authenticated = Boolean(token && store.verifySessionToken(token));
     return { authenticated };
+  });
+
+  // Logout: revoke every existing session token (H2).
+  server.post('/api/auth/logout', async (req, reply) => {
+    const token = extractToken(req);
+    if (!token || !store.verifySessionToken(token)) {
+      return reply.code(401).send({ success: false, error: 'Unauthorized' });
+    }
+    store.revokeAllSessions();
+    return { success: true };
+  });
+
+  // Exchange a valid session token for a short-lived, single-use WS ticket (H3).
+  server.post('/api/auth/ws-ticket', async (req, reply) => {
+    const token = extractToken(req);
+    if (!token || !store.verifySessionToken(token)) {
+      return reply.code(401).send({ success: false, error: 'Unauthorized' });
+    }
+    return { success: true, ticket: store.createWsTicket() };
   });
 
   server.post<{ Body: { currentPassword: string; newPassword: string } }>('/api/auth/change-password', async (req, reply) => {
@@ -134,21 +186,23 @@ export function registerApiRoutes(
     }
 
     if (!store.verifyPassword(currentPassword)) {
-      recordFailedAttempt(ip);
-      reply.header('Retry-After', 5);
+      const retryAfter = recordFailedAttempt(ip);
+      reply.header('Retry-After', retryAfter);
       return reply.code(401).send({
         success: false,
-        error: 'Current password is incorrect. Please wait 5s before retrying.',
-        retryAfter: 5
+        error: `Current password is incorrect. Please wait ${retryAfter}s before retrying.`,
+        retryAfter
       });
     }
 
-    if (newPassword.length < 1) {
-      return reply.code(400).send({ success: false, error: 'New password cannot be empty' });
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      return reply.code(400).send({ success: false, error: 'New password must be at least 8 characters' });
     }
 
     clearRateLimit(ip);
     store.setPassword(newPassword);
+    // Invalidate all existing sessions, then issue a fresh token for this client.
+    store.revokeAllSessions();
     const newToken = store.createSessionToken();
     return { success: true, token: newToken, message: 'Password successfully updated' };
   });
@@ -182,11 +236,14 @@ export function registerApiRoutes(
   // Grant extra bonus time
   server.post<{ Params: { id: string }; Body: { extraMinutes: number } }>('/api/devices/:id/grant-time', async (req, reply) => {
     const { extraMinutes } = req.body;
-    if (!extraMinutes || extraMinutes <= 0) {
-      return reply.code(400).send({ error: 'extraMinutes must be greater than 0' });
+    if (typeof extraMinutes !== 'number' || !Number.isFinite(extraMinutes) || extraMinutes <= 0) {
+      return reply.code(400).send({ error: 'extraMinutes must be a positive number' });
+    }
+    if (extraMinutes > 1440) {
+      return reply.code(400).send({ error: 'extraMinutes cannot exceed 1440 (24h)' });
     }
 
-    const extraSeconds = extraMinutes * 60;
+    const extraSeconds = Math.round(extraMinutes * 60);
     const policy = store.addBonusTime(req.params.id, extraSeconds);
     
     wsHub.sendCommandToClient(req.params.id, {
@@ -218,8 +275,8 @@ export function registerApiRoutes(
   // Kill specific app remotely
   server.post<{ Params: { id: string }; Body: { executableName: string } }>('/api/devices/:id/kill-app', async (req, reply) => {
     const { executableName } = req.body;
-    if (!executableName) {
-      return reply.code(400).send({ error: 'executableName is required' });
+    if (typeof executableName !== 'string' || !executableName.trim() || executableName.length > 260) {
+      return reply.code(400).send({ error: 'executableName must be a non-empty string (max 260 chars)' });
     }
 
     const sent = wsHub.sendCommandToClient(req.params.id, {
@@ -264,11 +321,42 @@ export function registerApiRoutes(
     return { history };
   });
 
+  // Device enrollment: exchange the deployment enrollment secret for a
+  // long-lived, device-bound token (C1). Rate-limited like the auth endpoints.
+  server.post<{ Body: { deviceId?: string; enrollmentSecret?: string } }>('/api/devices/enroll', async (req, reply) => {
+    const ip = getClientIp(req);
+    const rateCheck = checkAuthRateLimit(ip);
+    if (!rateCheck.allowed) {
+      reply.header('Retry-After', rateCheck.retryAfter);
+      return reply.code(429).send({ success: false, error: 'Too many attempts', retryAfter: rateCheck.retryAfter });
+    }
+
+    const deviceId = (req.body?.deviceId || '').trim();
+    const enrollmentSecret = req.body?.enrollmentSecret || '';
+    if (!deviceId || deviceId.length > 128) {
+      return reply.code(400).send({ success: false, error: 'deviceId is required (max 128 chars)' });
+    }
+    if (!store.verifyEnrollmentSecret(enrollmentSecret)) {
+      const retryAfter = recordFailedAttempt(ip);
+      reply.header('Retry-After', retryAfter);
+      return reply.code(401).send({ success: false, error: 'Invalid enrollment secret', retryAfter });
+    }
+
+    clearRateLimit(ip);
+    const token = store.createDeviceToken(deviceId);
+    return { success: true, token };
+  });
+
   // Dynamic 1-line PowerShell installer generator
-  server.get('/api/install.ps1', async (req, reply) => {
+  server.get<{ Querystring: { key?: string } }>('/api/install.ps1', async (req, reply) => {
     const host = req.headers.host || '127.0.0.1:4000';
     const protocol = req.headers['x-forwarded-proto'] === 'https' ? 'wss' : 'ws';
+    const httpProtocol = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
     const wsUrl = `${protocol}://${host}/ws/client`;
+    const httpBase = `${httpProtocol}://${host}`;
+    // The parent supplies the enrollment secret as ?key=... ; we only echo back
+    // what the caller provided (never the server's stored secret).
+    const enrollKey = (req.query?.key || '').replace(/[`"$]/g, '');
     const downloadUrl = 'https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe';
 
     const script = `# Watchtower 1-Click Client Installer
@@ -337,10 +425,30 @@ try {
     }
 }
 
-# 4. Save device configuration
+# 4. Enroll this device to obtain a device-bound auth token (C1)
+$EnrollKey = "${enrollKey}"
+$AuthToken = ""
+if ($EnrollKey) {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+        $enrollBody = @{ deviceId = $env:COMPUTERNAME; enrollmentSecret = $EnrollKey } | ConvertTo-Json
+        $enrollRes = Invoke-RestMethod -Uri "${httpBase}/api/devices/enroll" -Method Post -Body $enrollBody -ContentType "application/json" -ErrorAction Stop
+        if ($enrollRes -and $enrollRes.success -and $enrollRes.token) {
+            $AuthToken = $enrollRes.token
+            Write-Host " Device enrolled successfully." -ForegroundColor Green
+        }
+    } catch {
+        Write-Warning "Device enrollment failed ($($_.Exception.Message)). If REQUIRE_DEVICE_AUTH is enabled on the server, the client will not be able to connect."
+    }
+} else {
+    Write-Warning "No enrollment key provided (?key=...). If REQUIRE_DEVICE_AUTH is enabled on the server, this client will be rejected."
+}
+
+# 5. Save device configuration
 $Config = @{
     server_url = "${wsUrl}"
     device_id = $env:COMPUTERNAME
+    auth_token = $AuthToken
     heartbeat_interval_secs = 3
 } | ConvertTo-Json -Depth 5
 
@@ -388,12 +496,12 @@ Write-Host " Watchtower Client successfully installed, running in background, an
 
     const isValid = store.verifyPassword(password);
     if (!isValid) {
-      recordFailedAttempt(ip);
-      reply.header('Retry-After', 5);
+      const retryAfter = recordFailedAttempt(ip);
+      reply.header('Retry-After', retryAfter);
       return reply.code(401).send({
         success: false,
-        error: 'Incorrect password. Please wait 5s before retrying.',
-        retryAfter: 5
+        error: `Incorrect password. Please wait ${retryAfter}s before retrying.`,
+        retryAfter
       });
     }
 

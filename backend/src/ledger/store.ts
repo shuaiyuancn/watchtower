@@ -170,14 +170,41 @@ export class WatchtowerStore {
 
   private initSettings(): void {
     const existingHash = this.getSetting('dashboard_password_hash');
-    const resetFlag = this.getSetting('password_reset_v3');
-    if (!existingHash || !resetFlag || process.env.RESET_PASSWORD === 'true') {
-      this.setPassword('0000');
-      this.setSetting('password_reset_v3', 'true');
+    const needsPassword = !existingHash || process.env.RESET_PASSWORD === 'true';
+
+    if (needsPassword) {
+      const fromEnv = process.env.ADMIN_PASSWORD;
+      if (fromEnv && fromEnv.length >= 8) {
+        this.setPassword(fromEnv);
+        console.warn('[watchtower] Dashboard password set from ADMIN_PASSWORD env.');
+      } else {
+        if (fromEnv) {
+          console.warn('[watchtower] ADMIN_PASSWORD is too short (min 8 chars) — generating a random password instead.');
+        }
+        const generated = crypto.randomBytes(9).toString('base64url'); // 12-char URL-safe secret
+        this.setPassword(generated);
+        console.warn(
+          '\n==================================================================\n' +
+          ' 🛡️  WATCHTOWER: generated dashboard password (shown once)\n' +
+          `     ${generated}\n` +
+          '     Store it now, then change it from the dashboard.\n' +
+          '     Set ADMIN_PASSWORD to control this value on first boot.\n' +
+          '==================================================================\n'
+        );
+      }
     }
 
     if (!this.getSetting('session_secret')) {
       this.setSetting('session_secret', crypto.randomBytes(32).toString('hex'));
+    }
+    if (!this.getSetting('session_epoch')) {
+      this.setSetting('session_epoch', '1');
+    }
+    if (!this.getSetting('device_enrollment_secret')) {
+      const envSecret = process.env.DEVICE_ENROLLMENT_SECRET;
+      this.setSetting('device_enrollment_secret', envSecret && envSecret.length >= 16
+        ? envSecret
+        : crypto.randomBytes(24).toString('hex'));
     }
   }
 
@@ -750,28 +777,168 @@ export class WatchtowerStore {
     this.setSetting('dashboard_password_hash', hash);
   }
 
+  private requireSecret(key: string): string {
+    const secret = this.getSetting(key);
+    if (!secret) {
+      // Fail closed rather than signing with a predictable constant.
+      throw new Error(`[watchtower] Missing required secret "${key}". Refusing to issue/verify tokens.`);
+    }
+    return secret;
+  }
+
+  private getSessionTtlMs(): number {
+    const hours = parseInt(process.env.SESSION_TTL_HOURS || '12', 10);
+    const safe = Number.isFinite(hours) && hours > 0 ? hours : 12;
+    return safe * 60 * 60 * 1000;
+  }
+
+  private getSessionEpoch(): number {
+    return parseInt(this.getSetting('session_epoch') || '1', 10) || 1;
+  }
+
+  /** Invalidate every existing session token (logout-all / password change). */
+  public revokeAllSessions(): void {
+    this.setSetting('session_epoch', String(this.getSessionEpoch() + 1));
+  }
+
   public createSessionToken(): string {
-    const secret = this.getSetting('session_secret') || 'default-watchtower-secret';
-    const payload = `${Date.now()}_${crypto.randomBytes(16).toString('hex')}`;
+    const secret = this.requireSecret('session_secret');
+    const epoch = this.getSessionEpoch();
+    // payload: issuedAtMs.epoch.nonce
+    const payload = `${Date.now()}.${epoch}.${crypto.randomBytes(16).toString('hex')}`;
     const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
     return `${payload}.${signature}`;
   }
 
   public verifySessionToken(token: string): boolean {
     if (!token || typeof token !== 'string') return false;
-    const parts = token.split('.');
-    if (parts.length !== 2) return false;
-    const [payload, signature] = parts;
-    const secret = this.getSetting('session_secret') || 'default-watchtower-secret';
+    const idx = token.lastIndexOf('.');
+    if (idx <= 0) return false;
+    const payload = token.slice(0, idx);
+    const signature = token.slice(idx + 1);
+
+    const fields = payload.split('.');
+    if (fields.length !== 3) return false;
+    const [issuedAtStr, epochStr] = fields;
+
+    let secret: string;
+    try {
+      secret = this.requireSecret('session_secret');
+    } catch {
+      return false;
+    }
+
     try {
       const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+      // Reject anything that isn't exactly the expected hex signature so a
+      // tampered/padded suffix can't slip past lenient hex parsing.
+      if (signature.length !== expectedSig.length) return false;
       const bufA = Buffer.from(signature, 'hex');
       const bufB = Buffer.from(expectedSig, 'hex');
+      if (bufA.length !== bufB.length) return false;
+      if (!crypto.timingSafeEqual(bufA, bufB)) return false;
+    } catch {
+      return false;
+    }
+
+    // Revocation check (epoch must match current)
+    if (parseInt(epochStr, 10) !== this.getSessionEpoch()) return false;
+
+    // Expiry check
+    const issuedAt = parseInt(issuedAtStr, 10);
+    if (!Number.isFinite(issuedAt)) return false;
+    if (Date.now() - issuedAt > this.getSessionTtlMs()) return false;
+
+    return true;
+  }
+
+  // ---- Device enrollment & authentication (C1) ----
+
+  public verifyEnrollmentSecret(secret: string): boolean {
+    if (!secret || typeof secret !== 'string') return false;
+    const expected = this.getSetting('device_enrollment_secret');
+    if (!expected) return false;
+    try {
+      const bufA = Buffer.from(secret);
+      const bufB = Buffer.from(expected);
       if (bufA.length !== bufB.length) return false;
       return crypto.timingSafeEqual(bufA, bufB);
     } catch {
       return false;
     }
+  }
+
+  /** Long-lived token bound to a specific deviceId, signed with the server secret. */
+  public createDeviceToken(deviceId: string): string {
+    const secret = this.requireSecret('session_secret');
+    const payload = `${deviceId}.${Date.now()}.${crypto.randomBytes(12).toString('hex')}`;
+    const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    return `${Buffer.from(payload).toString('base64url')}.${signature}`;
+  }
+
+  public verifyDeviceToken(deviceId: string, token: string): boolean {
+    if (!deviceId || !token || typeof token !== 'string') return false;
+    const idx = token.lastIndexOf('.');
+    if (idx <= 0) return false;
+    const payloadB64 = token.slice(0, idx);
+    const signature = token.slice(idx + 1);
+
+    let payload: string;
+    try {
+      payload = Buffer.from(payloadB64, 'base64url').toString('utf-8');
+    } catch {
+      return false;
+    }
+
+    let secret: string;
+    try {
+      secret = this.requireSecret('session_secret');
+    } catch {
+      return false;
+    }
+
+    try {
+      const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+      if (signature.length !== expectedSig.length) return false;
+      const bufA = Buffer.from(signature, 'hex');
+      const bufB = Buffer.from(expectedSig, 'hex');
+      if (bufA.length !== bufB.length) return false;
+      if (!crypto.timingSafeEqual(bufA, bufB)) return false;
+    } catch {
+      return false;
+    }
+
+    // The token must be bound to this exact deviceId.
+    const boundDevice = payload.split('.')[0];
+    return boundDevice === deviceId;
+  }
+
+  // ---- Short-lived, single-use WebSocket tickets (H3) ----
+  // The dashboard exchanges its Bearer token for a ticket, then connects the
+  // WebSocket with ?ticket=... . Tickets expire in seconds and are single-use,
+  // so a token never rides in a URL and a leaked ticket is useless on replay.
+  private wsTickets: Map<string, number> = new Map();
+  private static readonly WS_TICKET_TTL_MS = 30_000;
+
+  public createWsTicket(): string {
+    const ticket = crypto.randomBytes(24).toString('base64url');
+    this.wsTickets.set(ticket, Date.now() + WatchtowerStore.WS_TICKET_TTL_MS);
+    // Opportunistic cleanup of expired tickets.
+    if (this.wsTickets.size > 100) {
+      const now = Date.now();
+      for (const [t, exp] of this.wsTickets) {
+        if (exp < now) this.wsTickets.delete(t);
+      }
+    }
+    return ticket;
+  }
+
+  public consumeWsTicket(ticket: string): boolean {
+    if (!ticket || typeof ticket !== 'string') return false;
+    const exp = this.wsTickets.get(ticket);
+    if (exp === undefined) return false;
+    this.wsTickets.delete(ticket); // single use
+    return exp >= Date.now();
   }
 
   public close(): void {
