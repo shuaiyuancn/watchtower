@@ -548,18 +548,42 @@ export default function App() {
     return `${m}m`;
   };
 
+  // Sensitive actions require the parent password to be re-entered, so a lifted
+  // session token alone cannot grant time, unlock, or change quotas.
+  const askPassword = (action: string): string | null => {
+    const pw = window.prompt(`Enter parent password to ${action}:`);
+    if (pw === null || pw === '') return null;
+    return pw;
+  };
+
   const handleGrantTime = async (minutes: number) => {
+    const confirmPassword = askPassword(minutes > 0 ? `grant +${minutes} min` : `remove ${Math.abs(minutes)} min bonus`);
+    if (!confirmPassword) return;
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/grant-time`, {
         method: 'POST',
-        body: JSON.stringify({ extraMinutes: minutes })
+        body: JSON.stringify({ extraMinutes: minutes, confirmPassword })
       });
       if (res.ok) {
-        showNotification(`Granted +${minutes} minutes to ${currentDevice.deviceId}`);
+        showNotification(minutes > 0
+          ? `Granted +${minutes} minutes to ${currentDevice.deviceId}`
+          : `Removed ${Math.abs(minutes)} minutes of bonus from ${currentDevice.deviceId}`);
+      } else if (res.status === 401) {
+        showNotification('Incorrect password — action cancelled');
       }
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleClearBonus = async () => {
+    const current = currentDevice.policy?.bonusSecondsToday || 0;
+    if (current <= 0) {
+      showNotification('No bonus time to remove');
+      return;
+    }
+    // Remove the full current bonus (server clamps at 0).
+    await handleGrantTime(-Math.ceil(current / 60));
   };
 
   const handleChangeAppCategory = async (app: string, category: string) => {
@@ -589,13 +613,22 @@ export default function App() {
 
   const handleToggleEmergencyLock = async () => {
     const newLockState = !currentDevice.policy.emergencyLock;
+    // Unlocking (giving access back) requires password re-entry.
+    let confirmPassword: string | undefined;
+    if (!newLockState) {
+      const pw = askPassword('unlock this device');
+      if (!pw) return;
+      confirmPassword = pw;
+    }
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/emergency-lock`, {
         method: 'POST',
-        body: JSON.stringify({ locked: newLockState })
+        body: JSON.stringify({ locked: newLockState, confirmPassword })
       });
       if (res.ok) {
         showNotification(newLockState ? '🚨 PC Locked Immediately' : '🔓 PC Unlocked');
+      } else if (res.status === 401) {
+        showNotification('Incorrect password — action cancelled');
       }
     } catch (e) {
       console.error(e);
@@ -618,13 +651,17 @@ export default function App() {
   };
 
   const handleSavePolicy = async (updatedPolicy: DevicePolicy) => {
+    const confirmPassword = askPassword('change quotas / bedtime');
+    if (!confirmPassword) return;
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/policy`, {
         method: 'POST',
-        body: JSON.stringify(updatedPolicy)
+        body: JSON.stringify({ ...updatedPolicy, confirmPassword })
       });
       if (res.ok) {
         showNotification('Policy updated & pushed to client');
+      } else if (res.status === 401) {
+        showNotification('Incorrect password — changes not saved');
       }
     } catch (e) {
       console.error(e);
@@ -1163,6 +1200,21 @@ export default function App() {
                       className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +1 Hour
+                    </button>
+                    <button
+                      onClick={() => handleGrantTime(-15)}
+                      className="px-3 py-1.5 bg-slate-700/40 hover:bg-slate-700/60 text-slate-300 border border-slate-600/40 rounded-lg text-xs font-semibold transition"
+                      title="Remove 15 minutes of bonus"
+                    >
+                      −15 Mins
+                    </button>
+                    <button
+                      onClick={handleClearBonus}
+                      disabled={(currentDevice.policy?.bonusSecondsToday || 0) <= 0}
+                      className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded-lg text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Remove all bonus time granted today"
+                    >
+                      Clear Bonus{(currentDevice.policy?.bonusSecondsToday || 0) > 0 ? ` (${Math.round((currentDevice.policy!.bonusSecondsToday || 0) / 60)}m)` : ''}
                     </button>
                   </div>
                 </div>

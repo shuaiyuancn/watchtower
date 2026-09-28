@@ -96,6 +96,19 @@ export function registerApiRoutes(
     return '';
   }
 
+  // Extra confirmation for sensitive actions: require the parent password in
+  // the request body even when a valid session token is present, so a lifted
+  // token alone cannot grant time, unlock, or change quotas.
+  function requirePasswordConfirmation(req: FastifyRequest, reply: FastifyReply): boolean {
+    const pw = (req.body as { confirmPassword?: string } | undefined)?.confirmPassword;
+    if (typeof pw !== 'string' || !store.verifyPassword(pw)) {
+      recordFailedAttempt(getClientIp(req));
+      reply.code(401).send({ error: 'Password confirmation required for this action.' });
+      return false;
+    }
+    return true;
+  }
+
   // Hook to protect /api/devices/* routes. Device enrollment is exempt: it
   // authenticates with the enrollment secret, not a dashboard session token.
   server.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -225,12 +238,15 @@ export function registerApiRoutes(
     return { policy };
   });
 
-  // Update device policy
-  server.post<{ Params: { id: string }; Body: Partial<DevicePolicy> }>('/api/devices/:id/policy', async (req, reply) => {
+  // Update device policy (quotas / bedtime). Requires password confirmation.
+  server.post<{ Params: { id: string }; Body: Partial<DevicePolicy> & { confirmPassword?: string } }>('/api/devices/:id/policy', async (req, reply) => {
+    if (!requirePasswordConfirmation(req, reply)) return;
     const existing = store.getPolicy(req.params.id);
+    // Never let confirmPassword leak into the stored policy.
+    const { confirmPassword, ...patch } = req.body || {};
     const updated: DevicePolicy = {
       ...existing,
-      ...req.body,
+      ...patch,
       deviceId: req.params.id
     };
 
@@ -246,34 +262,45 @@ export function registerApiRoutes(
     return { success: true, policy: updated };
   });
 
-  // Grant extra bonus time
-  server.post<{ Params: { id: string }; Body: { extraMinutes: number } }>('/api/devices/:id/grant-time', async (req, reply) => {
+  // Grant or remove bonus time (extraMinutes may be negative to remove)
+  server.post<{ Params: { id: string }; Body: { extraMinutes: number; confirmPassword?: string } }>('/api/devices/:id/grant-time', async (req, reply) => {
     const { extraMinutes } = req.body;
-    if (typeof extraMinutes !== 'number' || !Number.isFinite(extraMinutes) || extraMinutes <= 0) {
-      return reply.code(400).send({ error: 'extraMinutes must be a positive number' });
+    if (typeof extraMinutes !== 'number' || !Number.isFinite(extraMinutes) || extraMinutes === 0) {
+      return reply.code(400).send({ error: 'extraMinutes must be a non-zero number' });
     }
-    if (extraMinutes > 1440) {
-      return reply.code(400).send({ error: 'extraMinutes cannot exceed 1440 (24h)' });
+    if (Math.abs(extraMinutes) > 1440) {
+      return reply.code(400).send({ error: 'extraMinutes magnitude cannot exceed 1440 (24h)' });
     }
+    if (!requirePasswordConfirmation(req, reply)) return;
 
     const extraSeconds = Math.round(extraMinutes * 60);
     const policy = store.addBonusTime(req.params.id, extraSeconds);
-    
-    wsHub.sendCommandToClient(req.params.id, {
-      action: 'GRANT_TIME',
-      extraSeconds,
-      message: `Parent granted you +${extraMinutes} extra minutes of screen time!`
-    });
+
+    // Only push a client toast/credit when adding time.
+    if (extraMinutes > 0) {
+      wsHub.sendCommandToClient(req.params.id, {
+        action: 'GRANT_TIME',
+        extraSeconds,
+        message: `Parent granted you +${extraMinutes} extra minutes of screen time!`
+      });
+    }
 
     wsHub.broadcastPolicyUpdate(policy);
-    notifySlack(`➕ Watchtower granted +${extraMinutes}m to *${req.params.id}* (bonus today: ${Math.round((policy.bonusSecondsToday || 0) / 60)}m).`);
+    const bonusMin = Math.round((policy.bonusSecondsToday || 0) / 60);
+    notifySlack(
+      extraMinutes > 0
+        ? `➕ Watchtower granted +${extraMinutes}m to *${req.params.id}* (bonus today: ${bonusMin}m).`
+        : `➖ Watchtower removed ${Math.abs(extraMinutes)}m bonus from *${req.params.id}* (bonus today: ${bonusMin}m).`
+    );
 
     return { success: true, bonusSecondsToday: policy.bonusSecondsToday };
   });
 
   // Toggle emergency lock
-  server.post<{ Params: { id: string }; Body: { locked: boolean } }>('/api/devices/:id/emergency-lock', async (req, reply) => {
+  server.post<{ Params: { id: string }; Body: { locked: boolean; confirmPassword?: string } }>('/api/devices/:id/emergency-lock', async (req, reply) => {
     const { locked } = req.body;
+    // Disabling the lock (giving access back) requires re-confirmation.
+    if (!locked && !requirePasswordConfirmation(req, reply)) return;
     const policy = store.setEmergencyLock(req.params.id, Boolean(locked));
 
     wsHub.sendCommandToClient(req.params.id, {

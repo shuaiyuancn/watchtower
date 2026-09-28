@@ -21,7 +21,8 @@ const HeartbeatSchema = z.object({
   isIdle: z.boolean().optional(),
   idleSeconds: z.number().finite().min(0).max(86400).optional(),
   elapsedActiveDeltaSeconds: z.number().finite().min(0).max(86400).optional(),
-  utcOffsetMinutes: z.number().int().min(-840).max(840).optional()
+  utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
+  autoUpdate: z.boolean().optional()
 }).passthrough();
 
 const TelemetrySchema = z.object({
@@ -109,6 +110,8 @@ export class WebSocketHub {
       // a reconnect that already replaced it).
       if (this.clientSockets.get(deviceId) === ws) {
         this.clientSockets.delete(deviceId);
+        // Reset enforcement edge-state so a re-login during curfew alerts again.
+        this.enfState.delete(deviceId);
         notifySlack(`🔴 Watchtower device disconnected: *${deviceId}*`);
       }
 
@@ -149,7 +152,13 @@ export class WebSocketHub {
     const prev = this.enfState.get(deviceId) || { warn: false, kill: false, logoff: false };
 
     if (decision.shouldLogoffUser && !prev.logoff) {
-      notifySlack(`⛔ *${deviceId}*: daily limit / curfew reached — forcing logoff.${decision.reason ? ` (${decision.reason})` : ''}`);
+      if (decision.reason === 'BEDTIME_CURFEW') {
+        notifySlack(`🌙 *${deviceId}*: **in use during curfew** — forcing logoff.${currentApp ? ` (app: ${currentApp})` : ''}`);
+      } else if (decision.reason === 'EMERGENCY_LOCK') {
+        notifySlack(`🔒 *${deviceId}*: activity while emergency-locked — forcing logoff.`);
+      } else {
+        notifySlack(`⛔ *${deviceId}*: daily limit reached — forcing logoff.${decision.reason ? ` (${decision.reason})` : ''}`);
+      }
     }
     if (decision.shouldKillApp && !prev.kill) {
       notifySlack(`🛑 *${deviceId}*: app limit reached — terminating *${currentApp || 'app'}*.${decision.reason ? ` (${decision.reason})` : ''}`);
@@ -181,7 +190,8 @@ export class WebSocketHub {
         isIdle: Boolean(m.isIdle),
         idleSeconds: Number(m.idleSeconds || 0),
         elapsedActiveDeltaSeconds: Number(m.elapsedActiveDeltaSeconds || 0),
-        utcOffsetMinutes: typeof m.utcOffsetMinutes === 'number' ? m.utcOffsetMinutes : undefined
+        utcOffsetMinutes: typeof m.utcOffsetMinutes === 'number' ? m.utcOffsetMinutes : undefined,
+        autoUpdate: typeof m.autoUpdate === 'boolean' ? m.autoUpdate : undefined
       };
 
       const { decision, policy, usage } = this.store.recordHeartbeat(payload);

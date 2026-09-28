@@ -477,6 +477,17 @@ export class WatchtowerStore {
       this.lastActivityMap.delete(payload.deviceId);
     }
 
+    // Tamper signals: compare against the previous heartbeat's reported state.
+    const prevSession = this.activeSessions.get(payload.deviceId);
+    if (prevSession && typeof prevSession.utcOffsetMinutes === 'number'
+        && prevSession.utcOffsetMinutes !== offsetMin) {
+      notifySlack(`🕗 *${payload.deviceId}*: reported timezone offset changed ${prevSession.utcOffsetMinutes} → ${offsetMin} min (possible curfew-dodge).`);
+    }
+    if (payload.autoUpdate === false
+        && (prevSession?.autoUpdate === undefined || prevSession.autoUpdate === true)) {
+      notifySlack(`⚠️ *${payload.deviceId}*: client auto-update is DISABLED (tamper signal).`);
+    }
+
     // Update active session
     const { category } = resolveAppCategory(normApp, policy);
     this.activeSessions.set(payload.deviceId, {
@@ -488,7 +499,8 @@ export class WatchtowerStore {
       idleSeconds: payload.idleSeconds,
       lastHeartbeat: new Date().toISOString(),
       connected: true,
-      utcOffsetMinutes: offsetMin
+      utcOffsetMinutes: offsetMin,
+      autoUpdate: payload.autoUpdate
     });
 
     const decision = evaluateEnforcement(policy, usage, payload.currentApp, localNow);
@@ -718,9 +730,11 @@ export class WatchtowerStore {
     return policy;
   }
 
+  // extraSeconds may be negative to remove previously granted bonus time.
+  // Bonus is clamped to a minimum of 0.
   public addBonusTime(deviceId: string, extraSeconds: number): DevicePolicy {
     const policy = this.getPolicy(deviceId);
-    policy.bonusSecondsToday = (policy.bonusSecondsToday || 0) + extraSeconds;
+    policy.bonusSecondsToday = Math.max(0, (policy.bonusSecondsToday || 0) + extraSeconds);
     this.updatePolicy(policy);
     return policy;
   }
@@ -873,8 +887,8 @@ export class WatchtowerStore {
   }
 
   private getSessionTtlMs(): number {
-    const hours = parseInt(process.env.SESSION_TTL_HOURS || '12', 10);
-    const safe = Number.isFinite(hours) && hours > 0 ? hours : 12;
+    const hours = parseInt(process.env.SESSION_TTL_HOURS || '4', 10);
+    const safe = Number.isFinite(hours) && hours > 0 ? hours : 4;
     return safe * 60 * 60 * 1000;
   }
 
