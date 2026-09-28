@@ -51,12 +51,29 @@ async fn main() {
         .with(fmt_layer)
         .init();
 
+    // A freshly-updated process (relaunched by the updater) may briefly race the
+    // outgoing instance for the single-instance mutex; retry a few times.
+    let post_update = args.iter().any(|a| a == updater::UPDATED_ARG);
+
     #[cfg(windows)]
-    let _single_instance_guard = match single_instance::acquire_single_instance("WatchtowerClientDaemonMutex") {
-        Some(guard) => guard,
-        None => {
-            info!("Another instance of Watchtower is already running. Exiting cleanly.");
-            return;
+    let _single_instance_guard = {
+        let attempts = if post_update { 20 } else { 1 };
+        let mut guard = None;
+        for i in 0..attempts {
+            if let Some(g) = single_instance::acquire_single_instance("WatchtowerClientDaemonMutex") {
+                guard = Some(g);
+                break;
+            }
+            if i + 1 < attempts {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            }
+        }
+        match guard {
+            Some(g) => g,
+            None => {
+                info!("Another instance of Watchtower is already running. Exiting cleanly.");
+                return;
+            }
         }
     };
 
@@ -78,6 +95,14 @@ async fn main() {
 
     // Initialize System Tray Icon
     tray::init_system_tray(client_config.device_id.clone());
+
+    // Periodic self-update from the published GitHub release.
+    if client_config.auto_update {
+        let update_cfg = client_config.clone();
+        tokio::spawn(async move {
+            updater::run_update_loop(update_cfg).await;
+        });
+    }
 
     // Run sync loop
     sync::run_sync_loop(client_config).await;

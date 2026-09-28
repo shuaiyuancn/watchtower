@@ -50,3 +50,7 @@ jobs:
       - name: Build client (debug, compile check)
         working-directory: ./client
         run: cargo build
+
+      - name: Run client unit tests
+        working-directory: ./client
+        run: cargo test
