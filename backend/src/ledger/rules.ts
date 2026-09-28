@@ -72,7 +72,9 @@ export function isBedtimeActive(policy: DevicePolicy, now: Date = new Date()): b
     return false;
   }
   
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  // Read the wall-clock via UTC getters: callers pass a Date already shifted to
+  // the device's local time, so this is timezone-independent of the server.
+  const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
   const startMinutes = policy.bedtime.startHour * 60 + policy.bedtime.startMinute;
   const endMinutes = policy.bedtime.endHour * 60 + policy.bedtime.endMinute;
   

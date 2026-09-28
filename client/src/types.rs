@@ -17,6 +17,11 @@ pub struct ClientHeartbeat {
     pub idle_seconds: u64,
     #[serde(rename = "elapsedActiveDeltaSeconds")]
     pub elapsed_active_delta_seconds: u64,
+    /// This machine's current offset from UTC in minutes (e.g. +480 for UTC+8),
+    /// so the server evaluates bedtime, daily reset, and hour buckets in the
+    /// device's local time regardless of the server's timezone.
+    #[serde(rename = "utcOffsetMinutes")]
+    pub utc_offset_minutes: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

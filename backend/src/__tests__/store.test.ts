@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -246,7 +246,8 @@ describe('Watchtower SQLite Store', () => {
     // 2. Test getHourlyBreakdown
     const hourly = store.getHourlyBreakdown('child-pc', today);
     expect(hourly.length).toBe(24);
-    const currentHour = new Date().getHours();
+    // Heartbeats without an explicit offset are bucketed in UTC.
+    const currentHour = new Date().getUTCHours();
     const currentBucket = hourly[currentHour];
     expect(currentBucket.totalSeconds).toBe(50);
     expect(currentBucket.categorySeconds['Browsers']).toBe(30);
@@ -351,6 +352,39 @@ describe('Watchtower SQLite Store', () => {
   it('rejects retroactive move when category is unchanged (idempotent)', () => {
     expect(WatchtowerStore.isValidCategory('Games')).toBe(true);
     expect(WatchtowerStore.isValidCategory('Nonsense')).toBe(false);
+  });
+
+  it('evaluates bedtime in the device local timezone via utcOffsetMinutes', () => {
+    vi.useFakeTimers();
+    try {
+      // Fix the wall clock at 14:30 UTC.
+      vi.setSystemTime(new Date('2026-08-23T14:30:00Z'));
+
+      const policy = store.getPolicy('tz-pc');
+      policy.bedtime = { enabled: true, startHour: 22, startMinute: 0, endHour: 7, endMinute: 0 };
+      store.updatePolicy(policy);
+
+      const base = {
+        deviceId: 'tz-pc',
+        hostname: 'tz-pc',
+        currentApp: 'chrome.exe',
+        windowTitle: '',
+        isIdle: false,
+        idleSeconds: 0,
+        elapsedActiveDeltaSeconds: 3
+      };
+
+      // UTC+8: local time is 22:30 -> inside 22:00–07:00 curfew.
+      const inCurfew = store.recordHeartbeat({ ...base, utcOffsetMinutes: 480 });
+      expect(inCurfew.decision.shouldLogoffUser).toBe(true);
+      expect(inCurfew.decision.reason).toBe('BEDTIME_CURFEW');
+
+      // Same instant, UTC (offset 0): local time is 14:30 -> not curfew.
+      const notCurfew = store.recordHeartbeat({ ...base, utcOffsetMinutes: 0 });
+      expect(notCurfew.decision.shouldLogoffUser).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

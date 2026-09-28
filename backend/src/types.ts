@@ -49,6 +49,7 @@ export interface ActiveSession {
   idleSeconds: number;
   lastHeartbeat: string; // ISO string
   connected: boolean;
+  utcOffsetMinutes?: number; // last reported device offset from UTC in minutes
 }
 
 export interface DailyUsageSummary {
@@ -67,6 +68,7 @@ export interface ClientHeartbeatPayload {
   isIdle: boolean;
   idleSeconds: number;
   elapsedActiveDeltaSeconds: number; // seconds spent in foreground since last heartbeat
+  utcOffsetMinutes?: number; // device's offset from UTC in minutes (e.g. +480 for UTC+8)
 }
 
 export interface TelemetryEvent {

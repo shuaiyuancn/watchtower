@@ -327,6 +327,12 @@ export class WatchtowerStore {
     return now.toISOString().split('T')[0];
   }
 
+  // Local "today" for a device, using the last offset it reported (UTC if none).
+  private localTodayForDevice(deviceId: string): string {
+    const offsetMin = this.activeSessions.get(deviceId)?.utcOffsetMinutes ?? 0;
+    return new Date(Date.now() + offsetMin * 60000).toISOString().split('T')[0];
+  }
+
   private getUsageKey(deviceId: string, dateStr: string): string {
     return `${deviceId}_${dateStr}`;
   }
@@ -407,7 +413,12 @@ export class WatchtowerStore {
     policy: DevicePolicy;
     usage: DailyUsageSummary;
   } {
-    const today = this.getTodayDateString();
+    // Evaluate everything in the device's local time (bedtime, daily reset,
+    // hour buckets) using the offset the client reports, so it is independent
+    // of the server's timezone.
+    const offsetMin = typeof payload.utcOffsetMinutes === 'number' ? payload.utcOffsetMinutes : 0;
+    const localNow = new Date(Date.now() + offsetMin * 60000);
+    const today = localNow.toISOString().split('T')[0];
     const policy = this.getPolicy(payload.deviceId);
     const usage = this.getDailyUsage(payload.deviceId, today);
 
@@ -447,7 +458,7 @@ export class WatchtowerStore {
             category,
             now.toISOString(),
             today,
-            now.getHours(),
+            localNow.getUTCHours(),
             delta
           );
           this.lastActivityMap.set(payload.deviceId, {
@@ -476,10 +487,11 @@ export class WatchtowerStore {
       isIdle: payload.isIdle,
       idleSeconds: payload.idleSeconds,
       lastHeartbeat: new Date().toISOString(),
-      connected: true
+      connected: true,
+      utcOffsetMinutes: offsetMin
     });
 
-    const decision = evaluateEnforcement(policy, usage, payload.currentApp);
+    const decision = evaluateEnforcement(policy, usage, payload.currentApp, localNow);
     this.persistDailyUsage(usage);
 
     return { decision, policy, usage };
@@ -803,7 +815,7 @@ export class WatchtowerStore {
         deviceId,
         session: this.activeSessions.get(deviceId),
         policy: this.getPolicy(deviceId),
-        usageToday: this.getDailyUsage(deviceId)
+        usageToday: this.getDailyUsage(deviceId, this.localTodayForDevice(deviceId))
       });
     }
 
