@@ -20,7 +20,8 @@ const HeartbeatSchema = z.object({
   windowTitle: STR(512).optional(),
   isIdle: z.boolean().optional(),
   idleSeconds: z.number().finite().min(0).max(86400).optional(),
-  elapsedActiveDeltaSeconds: z.number().finite().min(0).max(86400).optional()
+  elapsedActiveDeltaSeconds: z.number().finite().min(0).max(86400).optional(),
+  utcOffsetMinutes: z.number().int().min(-840).max(840).optional()
 }).passthrough();
 
 const TelemetrySchema = z.object({
@@ -179,7 +180,8 @@ export class WebSocketHub {
         windowTitle: m.windowTitle || '',
         isIdle: Boolean(m.isIdle),
         idleSeconds: Number(m.idleSeconds || 0),
-        elapsedActiveDeltaSeconds: Number(m.elapsedActiveDeltaSeconds || 0)
+        elapsedActiveDeltaSeconds: Number(m.elapsedActiveDeltaSeconds || 0),
+        utcOffsetMinutes: typeof m.utcOffsetMinutes === 'number' ? m.utcOffsetMinutes : undefined
       };
 
       const { decision, policy, usage } = this.store.recordHeartbeat(payload);

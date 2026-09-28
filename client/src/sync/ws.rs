@@ -105,6 +105,7 @@ pub async fn run_sync_loop(config: ClientConfig) {
                             last_app = fg_info.executable_name.clone();
 
                             // 4. Send Heartbeat
+                            let utc_offset_minutes = chrono::Local::now().offset().local_minus_utc() / 60;
                             let heartbeat = ClientHeartbeat {
                                 msg_type: "HEARTBEAT".to_string(),
                                 device_id: config.device_id.clone(),
@@ -114,6 +115,7 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 is_idle,
                                 idle_seconds: idle_secs,
                                 elapsed_active_delta_seconds: elapsed_delta,
+                                utc_offset_minutes,
                             };
 
                             if let Ok(json_str) = serde_json::to_string(&heartbeat) {

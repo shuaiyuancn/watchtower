@@ -121,10 +121,11 @@ describe('Watchtower Rules Engine', () => {
       }
     };
 
-    const nightTime = new Date('2026-08-23T22:30:00'); // 10:30 PM
+    // isBedtimeActive reads wall-clock via UTC getters; pass explicit UTC instants.
+    const nightTime = new Date('2026-08-23T22:30:00Z'); // 10:30 PM local
     expect(isBedtimeActive(bedtimePolicy, nightTime)).toBe(true);
 
-    const dayTime = new Date('2026-08-23T14:00:00'); // 2:00 PM
+    const dayTime = new Date('2026-08-23T14:00:00Z'); // 2:00 PM local
     expect(isBedtimeActive(bedtimePolicy, dayTime)).toBe(false);
 
     const decision = evaluateEnforcement(bedtimePolicy, emptyUsage, 'chrome.exe', nightTime);
