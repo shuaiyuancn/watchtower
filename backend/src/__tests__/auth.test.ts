@@ -342,6 +342,115 @@ describe('Watchtower Authentication & Password Protection', () => {
     await app.close();
   }, 15000);
 
+  it('requires password confirmation for grant-time and supports bonus removal', async () => {
+    const { createServer } = await import('../server.js');
+    process.env.DATA_DIR = tempDir;
+    const { app } = await createServer();
+
+    const login = await app.inject({
+      method: 'POST', url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.9.0.1' },
+      payload: { password: ADMIN_PW }
+    });
+    const { token } = JSON.parse(login.body);
+    const auth = { authorization: `Bearer ${token}`, 'x-forwarded-for': '10.9.0.1' };
+
+    // 1. Grant without confirmPassword -> 401.
+    const noPw = await app.inject({
+      method: 'POST', url: '/api/devices/PC-1/grant-time',
+      headers: auth, payload: { extraMinutes: 240 }
+    });
+    expect(noPw.statusCode).toBe(401);
+
+    clearAllAuthRateLimits();
+
+    // 2. Grant with wrong confirmPassword -> 401.
+    const wrongPw = await app.inject({
+      method: 'POST', url: '/api/devices/PC-1/grant-time',
+      headers: auth, payload: { extraMinutes: 240, confirmPassword: 'nope' }
+    });
+    expect(wrongPw.statusCode).toBe(401);
+
+    clearAllAuthRateLimits();
+
+    // 3. Grant +240 with correct confirmPassword -> 200.
+    const ok = await app.inject({
+      method: 'POST', url: '/api/devices/PC-1/grant-time',
+      headers: auth, payload: { extraMinutes: 240, confirmPassword: ADMIN_PW }
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).bonusSecondsToday).toBe(240 * 60);
+
+    // 4. Remove more than granted -> clamps to 0.
+    const remove = await app.inject({
+      method: 'POST', url: '/api/devices/PC-1/grant-time',
+      headers: auth, payload: { extraMinutes: -600, confirmPassword: ADMIN_PW }
+    });
+    expect(remove.statusCode).toBe(200);
+    expect(JSON.parse(remove.body).bonusSecondsToday).toBe(0);
+
+    await app.close();
+  }, 15000);
+
+  it('requires password confirmation to change quotas and to unlock', async () => {
+    const { createServer } = await import('../server.js');
+    process.env.DATA_DIR = tempDir;
+    const { app } = await createServer();
+
+    const login = await app.inject({
+      method: 'POST', url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.9.1.1' },
+      payload: { password: ADMIN_PW }
+    });
+    const { token } = JSON.parse(login.body);
+    const auth = { authorization: `Bearer ${token}`, 'x-forwarded-for': '10.9.1.1' };
+
+    // Policy change without confirmation -> 401; the confirmPassword must not
+    // be persisted onto the policy.
+    const noPw = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/policy',
+      headers: auth, payload: { dailyGlobalLimitSeconds: 3600 }
+    });
+    expect(noPw.statusCode).toBe(401);
+
+    clearAllAuthRateLimits();
+
+    const ok = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/policy',
+      headers: auth, payload: { dailyGlobalLimitSeconds: 3600, confirmPassword: ADMIN_PW }
+    });
+    expect(ok.statusCode).toBe(200);
+    const savedPolicy = JSON.parse(ok.body).policy;
+    expect(savedPolicy.dailyGlobalLimitSeconds).toBe(3600);
+    expect('confirmPassword' in savedPolicy).toBe(false);
+
+    clearAllAuthRateLimits();
+
+    // Enabling the emergency lock needs no confirmation...
+    const lock = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/emergency-lock',
+      headers: auth, payload: { locked: true }
+    });
+    expect(lock.statusCode).toBe(200);
+
+    // ...but unlocking does.
+    const unlockNoPw = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/emergency-lock',
+      headers: auth, payload: { locked: false }
+    });
+    expect(unlockNoPw.statusCode).toBe(401);
+
+    clearAllAuthRateLimits();
+
+    const unlockOk = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/emergency-lock',
+      headers: auth, payload: { locked: false, confirmPassword: ADMIN_PW }
+    });
+    expect(unlockOk.statusCode).toBe(200);
+
+    await app.close();
+  }, 15000);
+
   it('protects uninstaller script: requires parent password and hides cleanup commands in dynamic payload', async () => {
     const { createServer } = await import('../server.js');
     process.env.DATA_DIR = tempDir;

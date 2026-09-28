@@ -22,6 +22,10 @@ pub struct ClientHeartbeat {
     /// device's local time regardless of the server's timezone.
     #[serde(rename = "utcOffsetMinutes")]
     pub utc_offset_minutes: i32,
+    /// Whether this client has self-update enabled, so the server can alert if
+    /// it is disabled (a tamper signal).
+    #[serde(rename = "autoUpdate")]
+    pub auto_update: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
