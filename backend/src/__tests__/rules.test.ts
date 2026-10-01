@@ -133,4 +133,36 @@ describe('Watchtower Rules Engine', () => {
     expect(decision.shouldLogoffUser).toBe(true);
     expect(decision.reason).toBe('BEDTIME_CURFEW');
   });
+
+  it('enforces session controls even on the desktop / lock screen / no window', () => {
+    const bedtimePolicy: DevicePolicy = {
+      ...mockPolicy,
+      bedtime: { enabled: true, startHour: 21, startMinute: 0, endHour: 7, endMinute: 0 }
+    };
+    const nightTime = new Date('2026-08-23T22:30:00Z');
+
+    for (const surface of ['explorer.exe', 'lockapp.exe', '', '   ']) {
+      // Curfew: logs off regardless of foreground, but does not kill the shell.
+      const curfew = evaluateEnforcement(bedtimePolicy, emptyUsage, surface, nightTime);
+      expect(curfew.shouldLogoffUser).toBe(true);
+      expect(curfew.reason).toBe('BEDTIME_CURFEW');
+      expect(curfew.shouldKillApp).toBe(false);
+
+      // Emergency lock applies at the desktop too.
+      const locked = evaluateEnforcement({ ...mockPolicy, emergencyLock: true }, emptyUsage, surface);
+      expect(locked.shouldLogoffUser).toBe(true);
+      expect(locked.reason).toBe('EMERGENCY_LOCK');
+
+      // Global limit applies at the desktop too.
+      const exhausted: DailyUsageSummary = { ...emptyUsage, totalActiveSeconds: 999999 };
+      const overLimit = evaluateEnforcement(mockPolicy, exhausted, surface);
+      expect(overLimit.shouldLogoffUser).toBe(true);
+      expect(overLimit.reason).toBe('GLOBAL_LIMIT_EXHAUSTED');
+    }
+
+    // With no session control active, a bare desktop does nothing.
+    const idleDesktop = evaluateEnforcement(mockPolicy, emptyUsage, 'explorer.exe');
+    expect(idleDesktop.shouldLogoffUser).toBe(false);
+    expect(idleDesktop.shouldKillApp).toBe(false);
+  });
 });
