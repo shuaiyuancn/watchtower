@@ -94,14 +94,16 @@ export function evaluateEnforcement(
   now: Date = new Date()
 ): EnforcementDecision {
   const normApp = currentApp.trim().toLowerCase();
-  if (!normApp || normApp === 'explorer.exe' || normApp === 'lockapp.exe') {
-    return { shouldKillApp: false, shouldLogoffUser: false, shouldWarn: false };
-  }
+  // "System surfaces" (desktop shell, lock screen, no focused window). We skip
+  // app/category-specific rules for these, but NOT the whole-session controls
+  // below (emergency lock, bedtime curfew, global limit) — those must apply
+  // even when the child is just sitting at the desktop.
+  const isSystemSurface = !normApp || normApp === 'explorer.exe' || normApp === 'lockapp.exe';
 
-  // 1. Emergency Lock Check
+  // 1. Emergency Lock Check (applies regardless of foreground app)
   if (policy.emergencyLock) {
     return {
-      shouldKillApp: true,
+      shouldKillApp: !isSystemSurface,
       shouldLogoffUser: true,
       shouldWarn: true,
       warningMessage: 'Screen time is currently locked by your parent.',
@@ -109,10 +111,10 @@ export function evaluateEnforcement(
     };
   }
 
-  // 2. Bedtime Curfew Check
+  // 2. Bedtime Curfew Check (applies regardless of foreground app)
   if (isBedtimeActive(policy, now)) {
     return {
-      shouldKillApp: true,
+      shouldKillApp: !isSystemSurface,
       shouldLogoffUser: true,
       shouldWarn: true,
       warningMessage: 'Bedtime curfew is active. PC is locked.',
@@ -120,18 +122,29 @@ export function evaluateEnforcement(
     };
   }
 
-  // 3. Global Screen Time Limit Check
+  // 3. Global Screen Time Limit Check (applies regardless of foreground app)
   const effectiveGlobalLimit = policy.dailyGlobalLimitSeconds + (policy.bonusSecondsToday || 0);
   const remainingGlobalSeconds = Math.max(0, effectiveGlobalLimit - usage.totalActiveSeconds);
 
   if (effectiveGlobalLimit > 0 && remainingGlobalSeconds <= 0) {
     return {
-      shouldKillApp: true,
+      shouldKillApp: !isSystemSurface,
       shouldLogoffUser: true,
       shouldWarn: true,
       warningMessage: 'Daily screen time limit reached! Locking PC...',
       reason: 'GLOBAL_LIMIT_EXHAUSTED',
       remainingGlobalSeconds: 0
+    };
+  }
+
+  // Beyond here are app/category-specific checks; nothing to enforce on a bare
+  // desktop or lock screen.
+  if (isSystemSurface) {
+    return {
+      shouldKillApp: false,
+      shouldLogoffUser: false,
+      shouldWarn: false,
+      remainingGlobalSeconds: Number.isFinite(remainingGlobalSeconds) ? remainingGlobalSeconds : undefined
     };
   }
 
