@@ -557,19 +557,15 @@ export default function App() {
   };
 
   const handleGrantTime = async (minutes: number) => {
-    const confirmPassword = askPassword(minutes > 0 ? `grant +${minutes} min` : `remove ${Math.abs(minutes)} min bonus`);
-    if (!confirmPassword) return;
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/grant-time`, {
         method: 'POST',
-        body: JSON.stringify({ extraMinutes: minutes, confirmPassword })
+        body: JSON.stringify({ extraMinutes: minutes })
       });
       if (res.ok) {
         showNotification(minutes > 0
-          ? `Granted +${minutes} minutes to ${currentDevice.deviceId}`
-          : `Removed ${Math.abs(minutes)} minutes of bonus from ${currentDevice.deviceId}`);
-      } else if (res.status === 401) {
-        showNotification('Incorrect password — action cancelled');
+          ? `Added +${minutes} minutes to ${currentDevice.deviceId}`
+          : `Removed ${Math.abs(minutes)} minutes from ${currentDevice.deviceId}`);
       }
     } catch (e) {
       console.error(e);

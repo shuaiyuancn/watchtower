@@ -342,7 +342,7 @@ describe('Watchtower Authentication & Password Protection', () => {
     await app.close();
   }, 15000);
 
-  it('requires password confirmation for grant-time and supports bonus removal', async () => {
+  it('adds/removes time without a password; removal cuts into the daily quota', async () => {
     const { createServer } = await import('../server.js');
     process.env.DATA_DIR = tempDir;
     const { app } = await createServer();
@@ -355,39 +355,24 @@ describe('Watchtower Authentication & Password Protection', () => {
     const { token } = JSON.parse(login.body);
     const auth = { authorization: `Bearer ${token}`, 'x-forwarded-for': '10.9.0.1' };
 
-    // 1. Grant without confirmPassword -> 401.
-    const noPw = await app.inject({
+    // Add +240 min with NO password confirmation -> 200.
+    const add = await app.inject({
       method: 'POST', url: '/api/devices/PC-1/grant-time',
       headers: auth, payload: { extraMinutes: 240 }
     });
-    expect(noPw.statusCode).toBe(401);
+    expect(add.statusCode).toBe(200);
+    expect(JSON.parse(add.body).bonusSecondsToday).toBe(240 * 60);
 
-    clearAllAuthRateLimits();
-
-    // 2. Grant with wrong confirmPassword -> 401.
-    const wrongPw = await app.inject({
-      method: 'POST', url: '/api/devices/PC-1/grant-time',
-      headers: auth, payload: { extraMinutes: 240, confirmPassword: 'nope' }
-    });
-    expect(wrongPw.statusCode).toBe(401);
-
-    clearAllAuthRateLimits();
-
-    // 3. Grant +240 with correct confirmPassword -> 200.
-    const ok = await app.inject({
-      method: 'POST', url: '/api/devices/PC-1/grant-time',
-      headers: auth, payload: { extraMinutes: 240, confirmPassword: ADMIN_PW }
-    });
-    expect(ok.statusCode).toBe(200);
-    expect(JSON.parse(ok.body).bonusSecondsToday).toBe(240 * 60);
-
-    // 4. Remove more than granted -> clamps to 0.
+    // Remove 600 min: 240 comes off bonus (-> 0), remaining 360 off the daily
+    // limit (default 86400s = 1440m -> 1080m).
     const remove = await app.inject({
       method: 'POST', url: '/api/devices/PC-1/grant-time',
-      headers: auth, payload: { extraMinutes: -600, confirmPassword: ADMIN_PW }
+      headers: auth, payload: { extraMinutes: -600 }
     });
     expect(remove.statusCode).toBe(200);
-    expect(JSON.parse(remove.body).bonusSecondsToday).toBe(0);
+    const body = JSON.parse(remove.body);
+    expect(body.bonusSecondsToday).toBe(0);
+    expect(body.dailyGlobalLimitSeconds).toBe(1080 * 60);
 
     await app.close();
   }, 15000);

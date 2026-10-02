@@ -730,11 +730,23 @@ export class WatchtowerStore {
     return policy;
   }
 
-  // extraSeconds may be negative to remove previously granted bonus time.
-  // Bonus is clamped to a minimum of 0.
-  public addBonusTime(deviceId: string, extraSeconds: number): DevicePolicy {
+  // Adjust available screen time. Positive adds bonus time. Negative removes
+  // time: it first consumes today's bonus, and any remainder reduces the daily
+  // global limit (clamped at 0), so a parent can shorten the day's quota too.
+  public adjustTime(deviceId: string, deltaSeconds: number): DevicePolicy {
     const policy = this.getPolicy(deviceId);
-    policy.bonusSecondsToday = Math.max(0, (policy.bonusSecondsToday || 0) + extraSeconds);
+    if (deltaSeconds >= 0) {
+      policy.bonusSecondsToday = (policy.bonusSecondsToday || 0) + deltaSeconds;
+    } else {
+      let remaining = -deltaSeconds;
+      const bonus = policy.bonusSecondsToday || 0;
+      const fromBonus = Math.min(bonus, remaining);
+      policy.bonusSecondsToday = bonus - fromBonus;
+      remaining -= fromBonus;
+      if (remaining > 0) {
+        policy.dailyGlobalLimitSeconds = Math.max(0, (policy.dailyGlobalLimitSeconds || 0) - remaining);
+      }
+    }
     this.updatePolicy(policy);
     return policy;
   }

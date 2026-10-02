@@ -262,8 +262,9 @@ export function registerApiRoutes(
     return { success: true, policy: updated };
   });
 
-  // Grant or remove bonus time (extraMinutes may be negative to remove)
-  server.post<{ Params: { id: string }; Body: { extraMinutes: number; confirmPassword?: string } }>('/api/devices/:id/grant-time', async (req, reply) => {
+  // Add or remove screen time (extraMinutes may be negative). Removal consumes
+  // bonus first, then shortens the daily quota. No password confirmation.
+  server.post<{ Params: { id: string }; Body: { extraMinutes: number } }>('/api/devices/:id/grant-time', async (req, reply) => {
     const { extraMinutes } = req.body;
     if (typeof extraMinutes !== 'number' || !Number.isFinite(extraMinutes) || extraMinutes === 0) {
       return reply.code(400).send({ error: 'extraMinutes must be a non-zero number' });
@@ -271,10 +272,9 @@ export function registerApiRoutes(
     if (Math.abs(extraMinutes) > 1440) {
       return reply.code(400).send({ error: 'extraMinutes magnitude cannot exceed 1440 (24h)' });
     }
-    if (!requirePasswordConfirmation(req, reply)) return;
 
     const extraSeconds = Math.round(extraMinutes * 60);
-    const policy = store.addBonusTime(req.params.id, extraSeconds);
+    const policy = store.adjustTime(req.params.id, extraSeconds);
 
     // Only push a client toast/credit when adding time.
     if (extraMinutes > 0) {
@@ -287,13 +287,18 @@ export function registerApiRoutes(
 
     wsHub.broadcastPolicyUpdate(policy);
     const bonusMin = Math.round((policy.bonusSecondsToday || 0) / 60);
+    const limitMin = Math.round((policy.dailyGlobalLimitSeconds || 0) / 60);
     notifySlack(
       extraMinutes > 0
-        ? `➕ Watchtower granted +${extraMinutes}m to *${req.params.id}* (bonus today: ${bonusMin}m).`
-        : `➖ Watchtower removed ${Math.abs(extraMinutes)}m bonus from *${req.params.id}* (bonus today: ${bonusMin}m).`
+        ? `➕ Watchtower added +${extraMinutes}m to *${req.params.id}* (bonus today: ${bonusMin}m).`
+        : `➖ Watchtower removed ${Math.abs(extraMinutes)}m from *${req.params.id}* (bonus: ${bonusMin}m, daily limit: ${limitMin}m).`
     );
 
-    return { success: true, bonusSecondsToday: policy.bonusSecondsToday };
+    return {
+      success: true,
+      bonusSecondsToday: policy.bonusSecondsToday,
+      dailyGlobalLimitSeconds: policy.dailyGlobalLimitSeconds
+    };
   });
 
   // Toggle emergency lock
