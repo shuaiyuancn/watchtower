@@ -153,11 +153,11 @@ export class WebSocketHub {
 
     if (decision.shouldLogoffUser && !prev.logoff) {
       if (decision.reason === 'BEDTIME_CURFEW') {
-        notifySlack(`🌙 *${deviceId}*: **in use during curfew** — forcing logoff.${currentApp ? ` (app: ${currentApp})` : ''}`);
+        notifySlack(`🌙 *${deviceId}*: **in use during curfew** — locking screen.${currentApp ? ` (app: ${currentApp})` : ''}`);
       } else if (decision.reason === 'EMERGENCY_LOCK') {
-        notifySlack(`🔒 *${deviceId}*: activity while emergency-locked — forcing logoff.`);
+        notifySlack(`🔒 *${deviceId}*: activity while emergency-locked — locking screen.`);
       } else {
-        notifySlack(`⛔ *${deviceId}*: daily limit reached — forcing logoff.${decision.reason ? ` (${decision.reason})` : ''}`);
+        notifySlack(`⛔ *${deviceId}*: daily limit reached — locking screen.${decision.reason ? ` (${decision.reason})` : ''}`);
       }
     }
     if (decision.shouldKillApp && !prev.kill) {
