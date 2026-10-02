@@ -142,9 +142,15 @@ describe('Watchtower SQLite Store', () => {
     newStore.close();
   });
 
-  it('adds bonus time and toggles emergency lock', () => {
-    store.addBonusTime('child-pc', 1800);
+  it('adjusts time (bonus then daily quota) and toggles emergency lock', () => {
+    store.adjustTime('child-pc', 1800); // +30m bonus
     expect(store.getPolicy('child-pc').bonusSecondsToday).toBe(1800);
+
+    // Remove 60m: 30m off bonus (-> 0), remaining 30m off the daily limit.
+    const daily = store.getPolicy('child-pc').dailyGlobalLimitSeconds;
+    store.adjustTime('child-pc', -3600);
+    expect(store.getPolicy('child-pc').bonusSecondsToday).toBe(0);
+    expect(store.getPolicy('child-pc').dailyGlobalLimitSeconds).toBe(daily - 1800);
 
     store.setEmergencyLock('child-pc', true);
     expect(store.getPolicy('child-pc').emergencyLock).toBe(true);
@@ -152,7 +158,7 @@ describe('Watchtower SQLite Store', () => {
     store.close();
 
     const newStore = new WatchtowerStore(tempDir);
-    expect(newStore.getPolicy('child-pc').bonusSecondsToday).toBe(1800);
+    expect(newStore.getPolicy('child-pc').bonusSecondsToday).toBe(0);
     expect(newStore.getPolicy('child-pc').emergencyLock).toBe(true);
     newStore.close();
   });
