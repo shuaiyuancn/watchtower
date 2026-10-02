@@ -117,11 +117,11 @@ pub fn kill_target_process(pid: Option<u32>, exe_name: &str) -> bool {
     win_enforce::kill_process_by_name(exe_name)
 }
 
-#[allow(dead_code)] // retained for manual/lock-only use; enforcement uses forced logoff
 pub fn execute_lock_workstation() {
     win_enforce::lock_workstation();
 }
 
+#[allow(dead_code)] // retained for optional forced-logoff enforcement; default is lock
 pub fn execute_forced_logoff() {
     win_enforce::force_logoff();
 }

@@ -5,7 +5,7 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
 use crate::config::ClientConfig;
-use crate::enforcer::{execute_forced_logoff, kill_target_process};
+use crate::enforcer::{execute_lock_workstation, kill_target_process};
 use crate::notifier::show_warning_toast;
 use crate::telemetry::{inspect_im_activity, inspect_youtube_activity};
 use crate::tracker::{get_foreground_info, get_idle_time_seconds, ForegroundInfo};
@@ -200,12 +200,11 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
             }
 
             if decision.should_logoff_user {
-                // Force a logoff (not just a lock screen, which the user can
-                // simply unlock with their own password). Re-issued every
-                // heartbeat while the limit/curfew holds, so any re-login is
-                // kicked within seconds.
-                warn!("Enforcement: Daily limit or curfew reached. Forcing logoff!");
-                execute_forced_logoff();
+                // Lock the workstation (not sign out). Re-issued every heartbeat
+                // while the limit/curfew holds, so if it is unlocked it locks
+                // again within seconds.
+                warn!("Enforcement: Daily limit or curfew reached. Locking workstation!");
+                execute_lock_workstation();
             }
         }
 
@@ -214,8 +213,7 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
             match cmd.action.as_str() {
                 "LOCK_NOW" => {
                     show_warning_toast("Watchtower", "PC locked by parent.");
-                    // Force logoff rather than a bypassable lock screen.
-                    execute_forced_logoff();
+                    execute_lock_workstation();
                 }
                 "KILL_APP" => {
                     if let Some(app) = cmd.target_app {
