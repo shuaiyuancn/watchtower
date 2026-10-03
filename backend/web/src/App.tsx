@@ -549,14 +549,6 @@ export default function App() {
     return `${m}m`;
   };
 
-  // Sensitive actions require the parent password to be re-entered, so a lifted
-  // session token alone cannot grant time, unlock, or change quotas.
-  const askPassword = (action: string): string | null => {
-    const pw = window.prompt(`Enter parent password to ${action}:`);
-    if (pw === null || pw === '') return null;
-    return pw;
-  };
-
   const handleGrantTime = async (minutes: number) => {
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/grant-time`, {
@@ -610,22 +602,13 @@ export default function App() {
 
   const handleToggleEmergencyLock = async () => {
     const newLockState = !currentDevice.policy.emergencyLock;
-    // Unlocking (giving access back) requires password re-entry.
-    let confirmPassword: string | undefined;
-    if (!newLockState) {
-      const pw = askPassword('unlock this device');
-      if (!pw) return;
-      confirmPassword = pw;
-    }
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/emergency-lock`, {
         method: 'POST',
-        body: JSON.stringify({ locked: newLockState, confirmPassword })
+        body: JSON.stringify({ locked: newLockState })
       });
       if (res.ok) {
         showNotification(newLockState ? '🚨 PC Locked Immediately' : '🔓 PC Unlocked');
-      } else if (res.status === 401) {
-        showNotification('Incorrect password — action cancelled');
       }
     } catch (e) {
       console.error(e);
@@ -648,17 +631,13 @@ export default function App() {
   };
 
   const handleSavePolicy = async (updatedPolicy: DevicePolicy) => {
-    const confirmPassword = askPassword('change quotas / bedtime');
-    if (!confirmPassword) return;
     try {
       const res = await authFetch(`/api/devices/${currentDevice.deviceId}/policy`, {
         method: 'POST',
-        body: JSON.stringify({ ...updatedPolicy, confirmPassword })
+        body: JSON.stringify(updatedPolicy)
       });
       if (res.ok) {
         showNotification('Policy updated & pushed to client');
-      } else if (res.status === 401) {
-        showNotification('Incorrect password — changes not saved');
       }
     } catch (e) {
       console.error(e);

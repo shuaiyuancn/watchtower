@@ -380,10 +380,17 @@ describe('Watchtower Authentication & Password Protection', () => {
     await app.close();
   }, 15000);
 
-  it('requires password confirmation to change quotas and to unlock', async () => {
+  it('changes quotas and toggles lock/unlock with just a session token (no re-auth)', async () => {
     const { createServer } = await import('../server.js');
     process.env.DATA_DIR = tempDir;
     const { app } = await createServer();
+
+    // Unauthenticated is still rejected.
+    const anon = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/policy',
+      payload: { dailyGlobalLimitSeconds: 3600 }
+    });
+    expect(anon.statusCode).toBe(401);
 
     const login = await app.inject({
       method: 'POST', url: '/api/auth/login',
@@ -391,50 +398,29 @@ describe('Watchtower Authentication & Password Protection', () => {
       payload: { password: ADMIN_PW }
     });
     const { token } = JSON.parse(login.body);
-    const auth = { authorization: `Bearer ${token}`, 'x-forwarded-for': '10.9.1.1' };
+    const auth = { authorization: `Bearer ${token}` };
 
-    // Policy change without confirmation -> 401; the confirmPassword must not
-    // be persisted onto the policy.
-    const noPw = await app.inject({
+    // Quota change with just the session token -> 200, no confirmPassword needed.
+    const ok = await app.inject({
       method: 'POST', url: '/api/devices/PC-2/policy',
       headers: auth, payload: { dailyGlobalLimitSeconds: 3600 }
     });
-    expect(noPw.statusCode).toBe(401);
-
-    clearAllAuthRateLimits();
-
-    const ok = await app.inject({
-      method: 'POST', url: '/api/devices/PC-2/policy',
-      headers: auth, payload: { dailyGlobalLimitSeconds: 3600, confirmPassword: ADMIN_PW }
-    });
     expect(ok.statusCode).toBe(200);
-    const savedPolicy = JSON.parse(ok.body).policy;
-    expect(savedPolicy.dailyGlobalLimitSeconds).toBe(3600);
-    expect('confirmPassword' in savedPolicy).toBe(false);
+    expect(JSON.parse(ok.body).policy.dailyGlobalLimitSeconds).toBe(3600);
 
-    clearAllAuthRateLimits();
-
-    // Enabling the emergency lock needs no confirmation...
+    // Lock and unlock, both without re-auth.
     const lock = await app.inject({
       method: 'POST', url: '/api/devices/PC-2/emergency-lock',
       headers: auth, payload: { locked: true }
     });
     expect(lock.statusCode).toBe(200);
 
-    // ...but unlocking does.
-    const unlockNoPw = await app.inject({
+    const unlock = await app.inject({
       method: 'POST', url: '/api/devices/PC-2/emergency-lock',
       headers: auth, payload: { locked: false }
     });
-    expect(unlockNoPw.statusCode).toBe(401);
-
-    clearAllAuthRateLimits();
-
-    const unlockOk = await app.inject({
-      method: 'POST', url: '/api/devices/PC-2/emergency-lock',
-      headers: auth, payload: { locked: false, confirmPassword: ADMIN_PW }
-    });
-    expect(unlockOk.statusCode).toBe(200);
+    expect(unlock.statusCode).toBe(200);
+    expect(JSON.parse(unlock.body).emergencyLock).toBe(false);
 
     await app.close();
   }, 15000);
