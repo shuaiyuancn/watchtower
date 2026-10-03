@@ -730,23 +730,12 @@ export class WatchtowerStore {
     return policy;
   }
 
-  // Adjust available screen time. Positive adds bonus time. Negative removes
-  // time: it first consumes today's bonus, and any remainder reduces the daily
-  // global limit (clamped at 0), so a parent can shorten the day's quota too.
+  // Adjust TODAY's screen time only, via the per-day bonus (which may go
+  // negative to remove time for the day). This never changes the configured
+  // base daily limit and resets with the day.
   public adjustTime(deviceId: string, deltaSeconds: number): DevicePolicy {
     const policy = this.getPolicy(deviceId);
-    if (deltaSeconds >= 0) {
-      policy.bonusSecondsToday = (policy.bonusSecondsToday || 0) + deltaSeconds;
-    } else {
-      let remaining = -deltaSeconds;
-      const bonus = policy.bonusSecondsToday || 0;
-      const fromBonus = Math.min(bonus, remaining);
-      policy.bonusSecondsToday = bonus - fromBonus;
-      remaining -= fromBonus;
-      if (remaining > 0) {
-        policy.dailyGlobalLimitSeconds = Math.max(0, (policy.dailyGlobalLimitSeconds || 0) - remaining);
-      }
-    }
+    policy.bonusSecondsToday = (policy.bonusSecondsToday || 0) + deltaSeconds;
     this.updatePolicy(policy);
     return policy;
   }

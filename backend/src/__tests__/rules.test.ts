@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { 
-  evaluateEnforcement, 
-  isBedtimeActive, 
-  resolveAppCategory 
+import {
+  evaluateEnforcement,
+  isBedtimeActive,
+  resolveAppCategory,
+  getBaseDailyLimitSeconds
 } from '../ledger/rules.js';
 import { DevicePolicy, DailyUsageSummary } from '../types.js';
 
@@ -132,6 +133,30 @@ describe('Watchtower Rules Engine', () => {
     expect(decision.shouldKillApp).toBe(true);
     expect(decision.shouldLogoffUser).toBe(true);
     expect(decision.reason).toBe('BEDTIME_CURFEW');
+  });
+
+  it('uses a per-weekday base limit when configured', () => {
+    // Sunday=0 ... Saturday=6. 2026-08-23 is a Sunday.
+    const sunday = new Date('2026-08-23T12:00:00Z');
+    const monday = new Date('2026-08-24T12:00:00Z');
+    const weekdayPolicy: DevicePolicy = {
+      ...mockPolicy,
+      dailyGlobalLimitSeconds: 7200, // default 2h
+      dailyLimitsByWeekday: [10800, null, null, null, null, null, 14400] // Sun 3h, Sat 4h, else default
+    };
+    expect(getBaseDailyLimitSeconds(weekdayPolicy, sunday)).toBe(10800);
+    expect(getBaseDailyLimitSeconds(weekdayPolicy, monday)).toBe(7200); // falls back to default
+    // No schedule -> always the default.
+    expect(getBaseDailyLimitSeconds(mockPolicy, sunday)).toBe(7200);
+  });
+
+  it('removes time for the day via a negative bonus (base limit untouched)', () => {
+    // 1h used, default base 2h, but today's bonus is -90m => effective 30m < used 60m.
+    const usage: DailyUsageSummary = { ...emptyUsage, totalActiveSeconds: 3600 };
+    const policy: DevicePolicy = { ...mockPolicy, bonusSecondsToday: -5400 };
+    const decision = evaluateEnforcement(policy, usage, 'chrome.exe');
+    expect(decision.shouldLogoffUser).toBe(true);
+    expect(decision.reason).toBe('GLOBAL_LIMIT_EXHAUSTED');
   });
 
   it('enforces session controls even on the desktop / lock screen / no window', () => {

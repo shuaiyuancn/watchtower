@@ -57,6 +57,7 @@ interface BedtimeSchedule {
 interface DevicePolicy {
   deviceId: string;
   dailyGlobalLimitSeconds: number;
+  dailyLimitsByWeekday?: (number | null)[] | null;
   warningThresholdSeconds: number;
   emergencyLock: boolean;
   bonusSecondsToday: number;
@@ -664,6 +665,24 @@ export default function App() {
     }
   };
 
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const toggleWeekdaySchedule = (on: boolean) => {
+    handleSavePolicy({
+      ...currentDevice.policy,
+      dailyLimitsByWeekday: on ? [null, null, null, null, null, null, null] : null
+    });
+  };
+
+  const saveWeekdayLimit = (index: number, rawHours: string) => {
+    const existing = Array.isArray(currentDevice.policy.dailyLimitsByWeekday) && currentDevice.policy.dailyLimitsByWeekday.length === 7
+      ? [...currentDevice.policy.dailyLimitsByWeekday]
+      : [null, null, null, null, null, null, null] as (number | null)[];
+    const trimmed = rawHours.trim();
+    existing[index] = trimmed === '' ? null : Math.max(0, Math.round(parseFloat(trimmed) * 3600));
+    handleSavePolicy({ ...currentDevice.policy, dailyLimitsByWeekday: existing });
+  };
+
   const handleAddAppRule = () => {
     if (!newAppExe.trim()) return;
     const cleanExe = newAppExe.trim().endsWith('.exe') ? newAppExe.trim() : `${newAppExe.trim()}.exe`;
@@ -706,41 +725,45 @@ export default function App() {
   const getCategoryIcon = (category: string) => {
     switch (category) {
       case 'Games':
-        return <Gamepad2 className="w-5 h-5 text-indigo-400" />;
+        return <Gamepad2 className="w-5 h-5 text-indigo-600" />;
       case 'Browsers':
-        return <Globe className="w-5 h-5 text-blue-400" />;
+        return <Globe className="w-5 h-5 text-blue-600" />;
       case 'Social':
-        return <MessageSquare className="w-5 h-5 text-emerald-400" />;
+        return <MessageSquare className="w-5 h-5 text-emerald-600" />;
       case 'Media':
-        return <Film className="w-5 h-5 text-amber-400" />;
+        return <Film className="w-5 h-5 text-amber-600" />;
       case 'Education':
       case 'Productivity':
-        return <BookOpen className="w-5 h-5 text-teal-400" />;
+        return <BookOpen className="w-5 h-5 text-teal-600" />;
       default:
-        return <Activity className="w-5 h-5 text-slate-400" />;
+        return <Activity className="w-5 h-5 text-slate-500" />;
     }
   };
 
   const getCategoryBadgeClass = (category: string) => {
     switch (category) {
       case 'Games':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+        return 'bg-purple-500/10 text-purple-600 border-purple-500/20';
       case 'Browsers':
-        return 'bg-sky-500/10 text-sky-400 border-sky-500/20';
+        return 'bg-sky-500/10 text-sky-600 border-sky-500/20';
       case 'Social':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+        return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
       case 'Media':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+        return 'bg-rose-500/10 text-rose-600 border-rose-500/20';
       case 'Education':
       case 'Productivity':
-        return 'bg-teal-500/10 text-teal-400 border-teal-500/20';
+        return 'bg-teal-500/10 text-teal-600 border-teal-500/20';
       default:
-        return 'bg-slate-800 text-slate-300 border-slate-700';
+        return 'bg-slate-100 text-slate-700 border-slate-300';
     }
   };
 
   const totalUsed = currentDevice.usageToday?.totalActiveSeconds || 0;
-  const totalLimit = (currentDevice.policy?.dailyGlobalLimitSeconds || 86400) + (currentDevice.policy?.bonusSecondsToday || 0);
+  const weekdaySchedule = currentDevice.policy?.dailyLimitsByWeekday;
+  const todayBase = (Array.isArray(weekdaySchedule) && typeof weekdaySchedule[new Date().getDay()] === 'number')
+    ? (weekdaySchedule[new Date().getDay()] as number)
+    : (currentDevice.policy?.dailyGlobalLimitSeconds ?? 86400);
+  const totalLimit = Math.max(0, todayBase + (currentDevice.policy?.bonusSecondsToday || 0));
   const percentUsed = Math.min(100, Math.round((totalUsed / (totalLimit || 1)) * 100));
 
   // Analytics computed metrics for the selected date
@@ -803,27 +826,27 @@ export default function App() {
   const imTelemetry = filteredTelemetry.filter((t) => t.type === 'IM_MESSAGE');
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-slate-200 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-slate-900">
       {/* Toast Notification */}
       {notification && (
-        <div className="fixed top-5 right-5 z-50 bg-slate-900 border border-blue-500/50 text-blue-100 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in">
-          <CheckCircle2 className="w-5 h-5 text-blue-400" />
+        <div className="fixed top-5 right-5 z-50 bg-white border border-blue-500/50 text-blue-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in">
+          <CheckCircle2 className="w-5 h-5 text-blue-600" />
           <span className="text-sm font-medium">{notification}</span>
         </div>
       )}
 
       {/* Parental Password Lock Screen Gate */}
       {!isAuthenticated && (
-        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-slate-200/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
             
-            <div className="p-4 bg-blue-600/10 border border-blue-500/20 rounded-2xl text-blue-400 mb-5 shadow-lg shadow-blue-500/5">
+            <div className="p-4 bg-blue-600/10 border border-blue-500/20 rounded-2xl text-blue-600 mb-5 shadow-lg shadow-blue-500/5">
               <Shield className="w-10 h-10" />
             </div>
 
-            <h2 className="text-2xl font-bold text-white tracking-tight mb-2">Watchtower Control Center</h2>
-            <p className="text-sm text-slate-400 mb-6">Enter parent password to access device controls and analytics</p>
+            <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">Watchtower Control Center</h2>
+            <p className="text-sm text-slate-500 mb-6">Enter parent password to access device controls and analytics</p>
 
             <form onSubmit={handleLogin} className="w-full space-y-4">
               <div className="relative">
@@ -837,20 +860,20 @@ export default function App() {
                   }}
                   placeholder={cooldownSeconds > 0 ? `Locked for ${cooldownSeconds}s...` : "Enter password..."}
                   autoFocus
-                  className="w-full bg-slate-950/80 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-white text-center text-lg tracking-wider rounded-2xl px-4 py-3.5 outline-none transition-all pr-12 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-slate-200/80 border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-900 text-center text-lg tracking-wider rounded-2xl px-4 py-3.5 outline-none transition-all pr-12 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <button
                   type="button"
                   disabled={isLoggingIn || cooldownSeconds > 0}
                   onClick={() => setShowLoginPassword(!showLoginPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 disabled:opacity-40"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-800 p-1 disabled:opacity-40"
                 >
                   {showLoginPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
 
               {loginError && (
-                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-medium text-left">
+                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-600 text-xs font-medium text-left">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{loginError}</span>
                 </div>
@@ -861,18 +884,18 @@ export default function App() {
                 disabled={isLoggingIn || cooldownSeconds > 0}
                 className={`w-full font-semibold py-3.5 px-4 rounded-2xl transition-all flex items-center justify-center gap-2 ${
                   cooldownSeconds > 0
-                    ? 'bg-slate-800/80 border border-amber-500/30 text-amber-300 cursor-not-allowed shadow-inner'
-                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 disabled:opacity-50'
+                    ? 'bg-slate-100/80 border border-amber-500/30 text-amber-600 cursor-not-allowed shadow-inner'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-slate-900 shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 disabled:opacity-50'
                 }`}
               >
                 {isLoggingIn ? (
                   <span className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-slate-300/20 border-t-white rounded-full animate-spin" />
                     Unlocking...
                   </span>
                 ) : cooldownSeconds > 0 ? (
                   <span className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 animate-pulse text-amber-400" />
+                    <Lock className="w-4 h-4 animate-pulse text-amber-600" />
                     Please wait {cooldownSeconds}s...
                   </span>
                 ) : (
@@ -890,15 +913,15 @@ export default function App() {
       {/* Change Password Modal */}
       {isChangePasswordOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col relative">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl flex flex-col relative">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-5">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400">
+                <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-600">
                   <Key className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Change Dashboard Password</h3>
-                  <p className="text-xs text-slate-400">Protect access to controls and screen time logs</p>
+                  <h3 className="text-base font-bold text-slate-900">Change Dashboard Password</h3>
+                  <p className="text-xs text-slate-500">Protect access to controls and screen time logs</p>
                 </div>
               </div>
               <button
@@ -906,7 +929,7 @@ export default function App() {
                   setIsChangePasswordOpen(false);
                   setChangePasswordError(null);
                 }}
-                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800"
+                className="text-slate-500 hover:text-slate-800 p-1.5 rounded-lg hover:bg-slate-100"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -914,63 +937,63 @@ export default function App() {
 
             <form onSubmit={handleChangePassword} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Current Password</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Current Password</label>
                 <input
                   type="password"
                   value={currPassword}
                   onChange={(e) => setCurrPassword(e.target.value)}
                   placeholder="Enter current password"
                   required
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
+                  className="w-full bg-slate-200 border border-slate-200 focus:border-blue-500 text-slate-900 text-sm rounded-xl px-3.5 py-2.5 outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">New Password</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">New Password</label>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Enter new password"
                   required
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
+                  className="w-full bg-slate-200 border border-slate-200 focus:border-blue-500 text-slate-900 text-sm rounded-xl px-3.5 py-2.5 outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Confirm New Password</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Confirm New Password</label>
                 <input
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Re-enter new password"
                   required
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none"
+                  className="w-full bg-slate-200 border border-slate-200 focus:border-blue-500 text-slate-900 text-sm rounded-xl px-3.5 py-2.5 outline-none"
                 />
               </div>
 
               {changePasswordError && (
-                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-medium">
+                <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-600 text-xs font-medium">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{changePasswordError}</span>
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
                 <button
                   type="button"
                   onClick={() => {
                     setIsChangePasswordOpen(false);
                     setChangePasswordError(null);
                   }}
-                  className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl transition-all"
+                  className="px-4 py-2 text-xs font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isChangingPassword}
-                  className="px-5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-md shadow-blue-600/20 transition-all disabled:opacity-50"
+                  className="px-5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-slate-900 rounded-xl shadow-md shadow-blue-600/20 transition-all disabled:opacity-50"
                 >
                   {isChangingPassword ? 'Saving...' : 'Update Password'}
                 </button>
@@ -981,16 +1004,16 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur sticky top-0 z-40">
+      <header className="border-b border-slate-200/80 bg-white/60 backdrop-blur sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-600/20 border border-blue-500/30 rounded-xl text-blue-400">
+            <div className="p-2 bg-blue-600/20 border border-blue-500/30 rounded-xl text-blue-600">
               <Shield className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+              <h1 className="text-lg font-bold tracking-tight text-slate-900 flex items-center gap-2">
                 WATCHTOWER
-                <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
                   Control Center
                 </span>
               </h1>
@@ -1003,10 +1026,10 @@ export default function App() {
               <select
                 value={selectedDeviceId}
                 onChange={(e) => setSelectedDeviceId(e.target.value)}
-                className="bg-slate-800/80 border border-slate-700/80 text-slate-200 text-xs rounded-xl px-3 py-1.5 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="bg-slate-100/80 border border-slate-300/80 text-slate-800 text-xs rounded-xl px-3 py-1.5 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
               >
                 {devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId} className="bg-slate-900 text-slate-200">
+                  <option key={d.deviceId} value={d.deviceId} className="bg-white text-slate-800">
                     🖥️ {d.deviceId} {d.session?.connected ? '● (Online)' : '(Offline)'}
                   </option>
                 ))}
@@ -1014,28 +1037,28 @@ export default function App() {
             )}
 
             {/* Live connection badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/70 border border-slate-700/60 text-xs">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100/70 border border-slate-300/60 text-xs">
               <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-              <span className="text-slate-300 font-medium">{wsConnected ? 'Live Sync' : 'Reconnecting...'}</span>
+              <span className="text-slate-700 font-medium">{wsConnected ? 'Live Sync' : 'Reconnecting...'}</span>
             </div>
 
             {/* Change Password Button */}
             <button
               onClick={() => setIsChangePasswordOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all cursor-pointer"
               title="Change Dashboard Password"
             >
-              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <Key className="w-3.5 h-3.5 text-amber-600" />
               <span className="hidden sm:inline">Password</span>
             </button>
 
             {/* Lock Dashboard Button */}
             <button
               onClick={handleLockDashboard}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all cursor-pointer"
               title="Lock Dashboard"
             >
-              <Lock className="w-3.5 h-3.5 text-slate-400" />
+              <Lock className="w-3.5 h-3.5 text-slate-500" />
               <span className="hidden sm:inline">Lock</span>
             </button>
 
@@ -1044,8 +1067,8 @@ export default function App() {
               onClick={handleToggleEmergencyLock}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all shadow-lg ${
                 currentDevice.policy.emergencyLock
-                  ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-900/30 ring-2 ring-red-400'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                  ? 'bg-red-600 hover:bg-red-500 text-slate-900 shadow-red-900/30 ring-2 ring-red-400'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300'
               }`}
             >
               {currentDevice.policy.emergencyLock ? (
@@ -1055,7 +1078,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <Unlock className="w-4 h-4 text-emerald-400" />
+                  <Unlock className="w-4 h-4 text-emerald-600" />
                   Lock PC Now
                 </>
               )}
@@ -1068,13 +1091,13 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col gap-6">
         
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-800 gap-2 overflow-x-auto pb-1">
+        <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-1">
           <button
             onClick={() => setActiveTab('monitor')}
             className={`pb-3 px-4 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
               activeTab === 'monitor'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Monitor className="w-4 h-4" /> Live Monitor
@@ -1083,8 +1106,8 @@ export default function App() {
             onClick={() => setActiveTab('analytics')}
             className={`pb-3 px-4 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
               activeTab === 'analytics'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <BarChart3 className="w-4 h-4" /> Usage History & Timeline
@@ -1093,8 +1116,8 @@ export default function App() {
             onClick={() => setActiveTab('limits')}
             className={`pb-3 px-4 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
               activeTab === 'limits'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Sliders className="w-4 h-4" /> Time Quotas & Bedtime
@@ -1103,8 +1126,8 @@ export default function App() {
             onClick={() => setActiveTab('apps')}
             className={`pb-3 px-4 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
               activeTab === 'apps'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Settings className="w-4 h-4" /> App Rules
@@ -1115,47 +1138,47 @@ export default function App() {
         {activeTab === 'monitor' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Live Foreground Status Card */}
-            <div className="lg:col-span-2 bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+            <div className="lg:col-span-2 bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
-                    <Monitor className="w-5 h-5 text-blue-400" />
-                    <h2 className="text-base font-semibold text-slate-100">Active Window & Activity</h2>
+                    <Monitor className="w-5 h-5 text-blue-600" />
+                    <h2 className="text-base font-semibold text-slate-900">Active Window & Activity</h2>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                       currentDevice.session?.connected
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : 'bg-slate-800 text-slate-400'
+                        ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                        : 'bg-slate-100 text-slate-500'
                     }`}>
                       {currentDevice.session?.connected ? 'Online' : 'Offline / Standby'}
                     </span>
                     {currentDevice.session?.isIdle && (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 border border-amber-500/20">
                         Idle ({Math.floor((currentDevice.session.idleSeconds || 0) / 60)}m)
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-5 mb-6">
+                <div className="bg-slate-200/70 border border-slate-200/80 rounded-xl p-5 mb-6">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
-                      <div className="p-3 bg-slate-800 rounded-xl mt-0.5">
+                      <div className="p-3 bg-slate-100 rounded-xl mt-0.5">
                         {getCategoryIcon(currentDevice.session?.category || 'Other')}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h3 className="text-lg font-bold text-white">
+                          <h3 className="text-lg font-bold text-slate-900">
                             {currentDevice.session?.currentApp || 'No active app reported yet'}
                           </h3>
                           {currentDevice.session?.category && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                            <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300">
                               {currentDevice.session.category}
                             </span>
                           )}
                         </div>
-                        <p className="text-sm text-slate-400 line-clamp-2 mt-1">
+                        <p className="text-sm text-slate-500 line-clamp-2 mt-1">
                           {currentDevice.session?.windowTitle || 'Client waiting for active user session...'}
                         </p>
                       </div>
@@ -1164,7 +1187,7 @@ export default function App() {
                     {currentDevice.session?.currentApp && (
                       <button
                         onClick={handleKillActiveApp}
-                        className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                        className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-500/30 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap"
                       >
                         <XOctagon className="w-4 h-4" /> Close App
                       </button>
@@ -1173,33 +1196,33 @@ export default function App() {
                 </div>
 
                 {/* Quick Bonus Time Grant Bar */}
-                <div className="flex items-center justify-between p-4 bg-slate-800/40 rounded-xl border border-slate-800">
+                <div className="flex items-center justify-between p-4 bg-slate-100/40 rounded-xl border border-slate-200">
                   <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-blue-400" />
-                    <span className="text-sm font-medium text-slate-300">Quick Grant Time:</span>
+                    <Clock className="w-4 h-4 text-blue-600" />
+                    <span className="text-sm font-medium text-slate-700">Quick Grant Time:</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleGrantTime(15)}
-                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +15 Mins
                     </button>
                     <button
                       onClick={() => handleGrantTime(30)}
-                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +30 Mins
                     </button>
                     <button
                       onClick={() => handleGrantTime(60)}
-                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +1 Hour
                     </button>
                     <button
                       onClick={() => handleGrantTime(-15)}
-                      className="px-3 py-1.5 bg-slate-700/40 hover:bg-slate-700/60 text-slate-300 border border-slate-600/40 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-1.5 bg-slate-200/40 hover:bg-slate-200/60 text-slate-700 border border-slate-400/40 rounded-lg text-xs font-semibold transition"
                       title="Remove 15 minutes of bonus"
                     >
                       −15 Mins
@@ -1207,7 +1230,7 @@ export default function App() {
                     <button
                       onClick={handleClearBonus}
                       disabled={(currentDevice.policy?.bonusSecondsToday || 0) <= 0}
-                      className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded-lg text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-600 border border-rose-500/30 rounded-lg text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
                       title="Remove all bonus time granted today"
                     >
                       Clear Bonus{(currentDevice.policy?.bonusSecondsToday || 0) > 0 ? ` (${Math.round((currentDevice.policy!.bonusSecondsToday || 0) / 60)}m)` : ''}
@@ -1216,30 +1239,30 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="text-xs text-slate-500 flex items-center justify-between pt-4 border-t border-slate-800/60 mt-4">
-                <span>Device ID: <span className="text-slate-400 font-mono">{currentDevice.deviceId}</span></span>
+              <div className="text-xs text-slate-500 flex items-center justify-between pt-4 border-t border-slate-200/60 mt-4">
+                <span>Device ID: <span className="text-slate-500 font-mono">{currentDevice.deviceId}</span></span>
                 <span>Last Activity: {currentDevice.session?.lastHeartbeat ? new Date(currentDevice.session.lastHeartbeat).toLocaleTimeString() : 'Never'}</span>
               </div>
             </div>
 
             {/* Global Screen Time Meter Card */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+            <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
-                <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2 mb-4">
-                  <Clock className="w-5 h-5 text-indigo-400" /> Daily Screen Allowance
+                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2 mb-4">
+                  <Clock className="w-5 h-5 text-indigo-600" /> Daily Screen Allowance
                 </h2>
 
                 <div className="text-center py-4">
-                  <div className="text-4xl font-extrabold text-white tracking-tight mb-1">
+                  <div className="text-4xl font-extrabold text-slate-900 tracking-tight mb-1">
                     {formatSeconds(totalUsed)}
                   </div>
-                  <div className="text-xs text-slate-400 font-medium">
+                  <div className="text-xs text-slate-500 font-medium">
                     of {formatSeconds(totalLimit)} daily limit
                   </div>
                 </div>
 
                 {/* Progress bar */}
-                <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden mb-4">
+                <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden mb-4">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
                       percentUsed >= 90
@@ -1252,23 +1275,23 @@ export default function App() {
                   />
                 </div>
 
-                <div className="flex justify-between text-xs text-slate-400 mb-6">
+                <div className="flex justify-between text-xs text-slate-500 mb-6">
                   <span>{percentUsed}% Used</span>
                   <span>{formatSeconds(Math.max(0, totalLimit - totalUsed))} Remaining</span>
                 </div>
 
                 {/* Category Usage List */}
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
                   Category Breakdown Today
                 </h3>
                 <div className="flex flex-col gap-2">
                   {Object.entries(currentDevice.usageToday?.categorySeconds || {}).map(([cat, sec]) => (
-                    <div key={cat} className="flex items-center justify-between text-sm py-1 border-b border-slate-800/60">
+                    <div key={cat} className="flex items-center justify-between text-sm py-1 border-b border-slate-200/60">
                       <div className="flex items-center gap-2">
                         {getCategoryIcon(cat)}
-                        <span className="text-slate-300 font-medium">{cat}</span>
+                        <span className="text-slate-700 font-medium">{cat}</span>
                       </div>
-                      <span className="text-slate-400 font-mono text-xs">{formatSeconds(sec)}</span>
+                      <span className="text-slate-500 font-mono text-xs">{formatSeconds(sec)}</span>
                     </div>
                   ))}
                   {Object.keys(currentDevice.usageToday?.categorySeconds || {}).length === 0 && (
@@ -1278,7 +1301,7 @@ export default function App() {
               </div>
 
               {currentDevice.policy.bonusSecondsToday > 0 && (
-                <div className="mt-4 p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-400 text-xs text-center font-medium">
+                <div className="mt-4 p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-600 text-xs text-center font-medium">
                   +{Math.round(currentDevice.policy.bonusSecondsToday / 60)} mins bonus screen time active today
                 </div>
               )}
@@ -1290,19 +1313,19 @@ export default function App() {
         {activeTab === 'analytics' && (
           <div className="flex flex-col gap-6">
             {/* Top Toolbar: Date Selector & Quick Stats */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <Calendar className="w-5 h-5 text-blue-400" />
-                  <h2 className="text-lg font-bold text-white">Usage Analytics & Timeline</h2>
+                  <Calendar className="w-5 h-5 text-blue-600" />
+                  <h2 className="text-lg font-bold text-slate-900">Usage Analytics & Timeline</h2>
                 </div>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   Granular chronological history of app and window activity, hourly distributions, and multi-day lookback.
                 </p>
               </div>
 
               {/* Date picker controls */}
-              <div className="flex items-center gap-2 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">
+              <div className="flex items-center gap-2 bg-slate-200/80 p-1.5 rounded-xl border border-slate-200">
                 <button
                   onClick={() => {
                     const d = new Date(selectedDate);
@@ -1310,7 +1333,7 @@ export default function App() {
                     setSelectedDate(d.toISOString().split('T')[0]);
                     setSelectedHour(null);
                   }}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
+                  className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
                   title="Previous Day"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -1323,7 +1346,7 @@ export default function App() {
                     setSelectedDate(e.target.value);
                     setSelectedHour(null);
                   }}
-                  className="bg-transparent text-sm text-slate-200 font-semibold px-2 py-1 focus:outline-none cursor-pointer"
+                  className="bg-transparent text-sm text-slate-800 font-semibold px-2 py-1 focus:outline-none cursor-pointer"
                 />
 
                 <button
@@ -1333,7 +1356,7 @@ export default function App() {
                     setSelectedDate(d.toISOString().split('T')[0]);
                     setSelectedHour(null);
                   }}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
+                  className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
                   title="Next Day"
                 >
                   <ChevronRight className="w-4 h-4" />
@@ -1345,7 +1368,7 @@ export default function App() {
                       setSelectedDate(todayStr);
                       setSelectedHour(null);
                     }}
-                    className="ml-2 px-2.5 py-1 text-xs font-semibold bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded-lg border border-blue-500/30 transition-colors"
+                    className="ml-2 px-2.5 py-1 text-xs font-semibold bg-blue-600/20 text-blue-600 hover:bg-blue-600/30 rounded-lg border border-blue-500/30 transition-colors"
                   >
                     Today
                   </button>
@@ -1355,23 +1378,23 @@ export default function App() {
 
             {/* Metrics Overview Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 flex items-center gap-3">
-                <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-xl text-blue-400">
+              <div className="bg-white/60 border border-slate-200/80 rounded-xl p-4 flex items-center gap-3">
+                <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-xl text-blue-600">
                   <Clock className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-xs text-slate-400 font-medium">Total Screen Time</div>
-                  <div className="text-xl font-bold text-white mt-0.5">{formatSeconds(selectedDateTotalSeconds)}</div>
+                  <div className="text-xs text-slate-500 font-medium">Total Screen Time</div>
+                  <div className="text-xl font-bold text-slate-900 mt-0.5">{formatSeconds(selectedDateTotalSeconds)}</div>
                 </div>
               </div>
 
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 flex items-center gap-3">
-                <div className="p-3 bg-indigo-600/10 border border-indigo-500/20 rounded-xl text-indigo-400">
+              <div className="bg-white/60 border border-slate-200/80 rounded-xl p-4 flex items-center gap-3">
+                <div className="p-3 bg-indigo-600/10 border border-indigo-500/20 rounded-xl text-indigo-600">
                   <TrendingUp className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-xs text-slate-400 font-medium">Peak Active Hour</div>
-                  <div className="text-xl font-bold text-white mt-0.5">
+                  <div className="text-xs text-slate-500 font-medium">Peak Active Hour</div>
+                  <div className="text-xl font-bold text-slate-900 mt-0.5">
                     {peakHourEntry && peakHourEntry.totalSeconds > 0
                       ? `${String(peakHourEntry.hour).padStart(2, '0')}:00 (${formatSecondsShort(peakHourEntry.totalSeconds)})`
                       : 'None'}
@@ -1379,41 +1402,41 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 flex items-center gap-3">
-                <div className="p-3 bg-purple-600/10 border border-purple-500/20 rounded-xl text-purple-400">
+              <div className="bg-white/60 border border-slate-200/80 rounded-xl p-4 flex items-center gap-3">
+                <div className="p-3 bg-purple-600/10 border border-purple-500/20 rounded-xl text-purple-600">
                   <Gamepad2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-xs text-slate-400 font-medium">Top App Used</div>
-                  <div className="text-xl font-bold text-white mt-0.5 truncate max-w-[150px]">
+                  <div className="text-xs text-slate-500 font-medium">Top App Used</div>
+                  <div className="text-xl font-bold text-slate-900 mt-0.5 truncate max-w-[150px]">
                     {topApp ? topApp[0] : 'None'}
                   </div>
                 </div>
               </div>
 
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 flex items-center gap-3">
-                <div className="p-3 bg-emerald-600/10 border border-emerald-500/20 rounded-xl text-emerald-400">
+              <div className="bg-white/60 border border-slate-200/80 rounded-xl p-4 flex items-center gap-3">
+                <div className="p-3 bg-emerald-600/10 border border-emerald-500/20 rounded-xl text-emerald-600">
                   <History className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-xs text-slate-400 font-medium">Recorded Log Events</div>
-                  <div className="text-xl font-bold text-white mt-0.5">{timelineData.length} events</div>
+                  <div className="text-xs text-slate-500 font-medium">Recorded Log Events</div>
+                  <div className="text-xl font-bold text-slate-900 mt-0.5">{timelineData.length} events</div>
                 </div>
               </div>
             </div>
 
             {/* 24-Hour Distribution Chart */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl">
+            <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5 text-blue-400" />
-                  <h3 className="text-base font-semibold text-white">24-Hour Usage Distribution</h3>
+                  <BarChart3 className="w-5 h-5 text-blue-600" />
+                  <h3 className="text-base font-semibold text-slate-900">24-Hour Usage Distribution</h3>
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   {selectedHour !== null && (
                     <button
                       onClick={() => setSelectedHour(null)}
-                      className="text-blue-400 hover:underline font-medium"
+                      className="text-blue-600 hover:underline font-medium"
                     >
                       Showing {String(selectedHour).padStart(2, '0')}:00 only (Click to Reset)
                     </button>
@@ -1422,7 +1445,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="h-44 flex items-end gap-1.5 pt-6 pb-2 px-2 bg-slate-950/60 rounded-xl border border-slate-800/60 overflow-x-auto">
+              <div className="h-44 flex items-end gap-1.5 pt-6 pb-2 px-2 bg-slate-200/60 rounded-xl border border-slate-200/60 overflow-x-auto">
                 {Array.from({ length: 24 }).map((_, h) => {
                   const entry = hourlyData.find((item) => item.hour === h) || {
                     hour: h,
@@ -1443,12 +1466,12 @@ export default function App() {
                       }`}
                     >
                       {/* Tooltip on hover */}
-                      <div className="opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity text-[10px] bg-slate-800 text-white px-2 py-0.5 rounded shadow-lg mb-1 whitespace-nowrap z-10 border border-slate-700">
+                      <div className="opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity text-[10px] bg-slate-100 text-slate-900 px-2 py-0.5 rounded shadow-lg mb-1 whitespace-nowrap z-10 border border-slate-300">
                         {String(h).padStart(2, '0')}:00 - {formatSeconds(entry.totalSeconds)}
                       </div>
 
                       {/* Bar Fill */}
-                      <div className="w-full bg-slate-800/50 rounded-t-md h-full flex items-end">
+                      <div className="w-full bg-slate-100/50 rounded-t-md h-full flex items-end">
                         <div
                           style={{ height: `${Math.max(hasActivity ? 8 : 2, heightPercent)}%` }}
                           className={`w-full rounded-t-md transition-all duration-300 ${
@@ -1456,13 +1479,13 @@ export default function App() {
                               ? 'bg-blue-400'
                               : hasActivity
                               ? 'bg-gradient-to-t from-blue-600 to-indigo-500 group-hover:from-blue-500 group-hover:to-indigo-400'
-                              : 'bg-slate-800/40'
+                              : 'bg-slate-100/40'
                           }`}
                         />
                       </div>
 
                       {/* Hour Label */}
-                      <div className="text-[10px] text-slate-500 group-hover:text-slate-300 mt-2 font-mono">
+                      <div className="text-[10px] text-slate-500 group-hover:text-slate-700 mt-2 font-mono">
                         {h % 3 === 0 ? String(h).padStart(2, '0') : ''}
                       </div>
                     </div>
@@ -1473,11 +1496,11 @@ export default function App() {
 
             {/* 14-Day Lookback Strip */}
             {dailyHistory.length > 0 && (
-              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl">
+              <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <History className="w-5 h-5 text-blue-400" />
-                    <h3 className="text-base font-semibold text-white">Past 14-Day Lookback</h3>
+                    <History className="w-5 h-5 text-blue-600" />
+                    <h3 className="text-base font-semibold text-slate-900">Past 14-Day Lookback</h3>
                   </div>
                   <span className="text-xs text-slate-500">Click any day to inspect</span>
                 </div>
@@ -1494,12 +1517,12 @@ export default function App() {
                         }}
                         className={`p-3 rounded-xl border text-left transition-all ${
                           isSelected
-                            ? 'bg-blue-600/20 border-blue-500 text-white ring-1 ring-blue-500'
-                            : 'bg-slate-950/60 border-slate-800/80 hover:bg-slate-800/50 text-slate-300'
+                            ? 'bg-blue-600/20 border-blue-500 text-slate-900 ring-1 ring-blue-500'
+                            : 'bg-slate-200/60 border-slate-200/80 hover:bg-slate-100/50 text-slate-700'
                         }`}
                       >
-                        <div className="text-xs text-slate-400 font-medium">{day.date}</div>
-                        <div className="text-sm font-bold mt-1 text-blue-300">{formatSeconds(day.totalActiveSeconds)}</div>
+                        <div className="text-xs text-slate-500 font-medium">{day.date}</div>
+                        <div className="text-sm font-bold mt-1 text-blue-600">{formatSeconds(day.totalActiveSeconds)}</div>
                       </button>
                     );
                   })}
@@ -1508,13 +1531,13 @@ export default function App() {
             )}
 
             {/* Granular Activity Timeline: App at which time */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl">
+            <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-blue-400" /> Granular Timeline Feed
+                  <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-blue-600" /> Granular Timeline Feed
                   </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-500 mt-0.5">
                     Chronological audit of every application, window title, and active period recorded.
                   </p>
                 </div>
@@ -1525,7 +1548,7 @@ export default function App() {
                   <select
                     value={categoryFilter}
                     onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-3 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="bg-slate-100 border border-slate-300 text-slate-800 text-xs rounded-xl px-3 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="All">All Categories</option>
                     <option value="Games">Games</option>
@@ -1544,16 +1567,16 @@ export default function App() {
                       placeholder="Search app or window..."
                       value={timelineSearch}
                       onChange={(e) => setTimelineSearch(e.target.value)}
-                      className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl pl-9 pr-3 py-2 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="bg-slate-100 border border-slate-300 text-slate-800 text-xs rounded-xl pl-9 pr-3 py-2 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
               </div>
 
               {/* Timeline Table */}
-              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-900/90 text-slate-400 font-semibold border-b border-slate-800">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-200/40">
+                <table className="w-full text-left text-xs text-slate-700">
+                  <thead className="bg-white/90 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
                       <th className="py-3 px-4">Time</th>
                       <th className="py-3 px-4">Application</th>
@@ -1562,7 +1585,7 @@ export default function App() {
                       <th className="py-3 px-4 text-right">Duration</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
+                  <tbody className="divide-y divide-slate-200/60">
                     {filteredTimeline.map((log) => {
                       const startDate = new Date(log.timestamp);
                       const endDate = log.endTime ? new Date(log.endTime) : new Date(startDate.getTime() + log.durationSeconds * 1000);
@@ -1571,9 +1594,9 @@ export default function App() {
                       const timeDisplay = log.durationSeconds >= 10 ? `${startStr} – ${endStr}` : startStr;
 
                       return (
-                        <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
-                          <td className="py-3 px-4 font-mono text-slate-300 whitespace-nowrap">{timeDisplay}</td>
-                          <td className="py-3 px-4 font-semibold text-white whitespace-nowrap">
+                        <tr key={log.id} className="hover:bg-slate-100/30 transition-colors">
+                          <td className="py-3 px-4 font-mono text-slate-700 whitespace-nowrap">{timeDisplay}</td>
+                          <td className="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               {getCategoryIcon(log.category)}
                               <span>{log.app}</span>
@@ -1588,14 +1611,14 @@ export default function App() {
                               className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${getCategoryBadgeClass(log.category)}`}
                             >
                               {['Games', 'Browsers', 'Social', 'Media', 'Education', 'Productivity', 'System', 'Other'].map((c) => (
-                                <option key={c} value={c} className="bg-slate-900 text-slate-200">{c}</option>
+                                <option key={c} value={c} className="bg-white text-slate-800">{c}</option>
                               ))}
                             </select>
                           </td>
-                          <td className="py-3 px-4 text-slate-300 max-w-md truncate" title={log.windowTitle}>
+                          <td className="py-3 px-4 text-slate-700 max-w-md truncate" title={log.windowTitle}>
                             {log.windowTitle || '<No title>'}
                           </td>
-                          <td className="py-3 px-4 text-right font-mono text-blue-300 whitespace-nowrap font-medium">
+                          <td className="py-3 px-4 text-right font-mono text-blue-600 whitespace-nowrap font-medium">
                             {formatSeconds(log.durationSeconds)}
                           </td>
                         </tr>
@@ -1616,19 +1639,19 @@ export default function App() {
             </div>
 
             {/* Deep Telemetry Section (YouTube & IM) */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+            <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200/80 pb-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-red-400" />
-                    <h3 className="text-base font-semibold text-white">Deep Telemetry: YouTube & IM Activity</h3>
+                    <Activity className="w-5 h-5 text-red-600" />
+                    <h3 className="text-base font-semibold text-slate-900">Deep Telemetry: YouTube & IM Activity</h3>
                     {selectedHour !== null && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 border border-blue-500/20">
                         <Clock className="w-3 h-3" />
                         {String(selectedHour).padStart(2, '0')}:00 - {String(selectedHour).padStart(2, '0')}:59
                         <button
                           onClick={() => setSelectedHour(null)}
-                          className="hover:text-white transition-colors ml-0.5"
+                          className="hover:text-slate-900 transition-colors ml-0.5"
                           title="Clear hour filter"
                         >
                           <X className="w-3 h-3" />
@@ -1636,21 +1659,21 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Isolated audit of YouTube video watch history and IM chat telemetry for <span className="text-slate-200 font-medium font-mono">{selectedDeviceId}</span> on {selectedDate}.
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Isolated audit of YouTube video watch history and IM chat telemetry for <span className="text-slate-800 font-medium font-mono">{selectedDeviceId}</span> on {selectedDate}.
                   </p>
                 </div>
 
                 {/* Filters */}
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Type Filter */}
-                  <div className="flex items-center bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+                  <div className="flex items-center bg-slate-200/80 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
                     <button
                       onClick={() => setTelemetryTypeFilter('ALL')}
                       className={`px-3 py-1.5 rounded-lg transition-colors ${
                         telemetryTypeFilter === 'ALL'
-                          ? 'bg-blue-600 text-white'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-blue-600 text-slate-900'
+                          : 'text-slate-500 hover:text-slate-900'
                       }`}
                     >
                       All ({filteredTelemetry.length})
@@ -1659,8 +1682,8 @@ export default function App() {
                       onClick={() => setTelemetryTypeFilter('YOUTUBE')}
                       className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
                         telemetryTypeFilter === 'YOUTUBE'
-                          ? 'bg-red-600 text-white'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-red-600 text-slate-900'
+                          : 'text-slate-500 hover:text-slate-900'
                       }`}
                     >
                       <Youtube className="w-3.5 h-3.5" />
@@ -1670,8 +1693,8 @@ export default function App() {
                       onClick={() => setTelemetryTypeFilter('IM_MESSAGE')}
                       className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
                         telemetryTypeFilter === 'IM_MESSAGE'
-                          ? 'bg-emerald-600 text-white'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-emerald-600 text-slate-900'
+                          : 'text-slate-500 hover:text-slate-900'
                       }`}
                     >
                       <Send className="w-3.5 h-3.5" />
@@ -1687,7 +1710,7 @@ export default function App() {
                       placeholder="Search title, message, app..."
                       value={telemetrySearch}
                       onChange={(e) => setTelemetrySearch(e.target.value)}
-                      className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl pl-9 pr-3 py-2 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="bg-slate-100 border border-slate-300 text-slate-800 text-xs rounded-xl pl-9 pr-3 py-2 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
@@ -1697,11 +1720,11 @@ export default function App() {
               <div className={`grid gap-6 ${telemetryTypeFilter === 'ALL' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
                 {/* YouTube Column */}
                 {(telemetryTypeFilter === 'ALL' || telemetryTypeFilter === 'YOUTUBE') && (
-                  <div className="flex flex-col bg-slate-950/40 border border-slate-800/80 rounded-xl p-4">
+                  <div className="flex flex-col bg-slate-200/40 border border-slate-200/80 rounded-xl p-4">
                     <div className="flex items-center justify-between gap-2 mb-3">
                       <div className="flex items-center gap-2">
                         <Youtube className="w-4 h-4 text-red-500" />
-                        <h4 className="text-sm font-semibold text-white">YouTube Watch History</h4>
+                        <h4 className="text-sm font-semibold text-slate-900">YouTube Watch History</h4>
                       </div>
                       <span className="text-xs text-slate-500 font-medium">
                         {youtubeTelemetry.length} {youtubeTelemetry.length === 1 ? 'video' : 'videos'}
@@ -1710,15 +1733,15 @@ export default function App() {
 
                     <div className="overflow-y-auto max-h-[420px] flex flex-col gap-2 pr-1">
                       {youtubeTelemetry.map((t) => (
-                        <div key={t.id} className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-xl hover:border-slate-700 transition-colors">
-                          <div className="text-sm font-medium text-slate-100 break-words">{t.titleOrText}</div>
+                        <div key={t.id} className="p-3 bg-white/80 border border-slate-200/90 rounded-xl hover:border-slate-300 transition-colors">
+                          <div className="text-sm font-medium text-slate-900 break-words">{t.titleOrText}</div>
                           {t.details?.channel && (
-                            <div className="text-xs text-red-400/90 font-medium mt-1">
+                            <div className="text-xs text-red-600/90 font-medium mt-1">
                               Channel: {t.details.channel}
                             </div>
                           )}
                           <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
-                            <span>Browser: <span className="text-slate-300 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{t.app}</span></span>
+                            <span>Browser: <span className="text-slate-700 font-mono bg-slate-100 px-1.5 py-0.5 rounded">{t.app}</span></span>
                             <span className="font-mono">{new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                           </div>
                         </div>
@@ -1736,11 +1759,11 @@ export default function App() {
 
                 {/* IM Message Column */}
                 {(telemetryTypeFilter === 'ALL' || telemetryTypeFilter === 'IM_MESSAGE') && (
-                  <div className="flex flex-col bg-slate-950/40 border border-slate-800/80 rounded-xl p-4">
+                  <div className="flex flex-col bg-slate-200/40 border border-slate-200/80 rounded-xl p-4">
                     <div className="flex items-center justify-between gap-2 mb-3">
                       <div className="flex items-center gap-2">
-                        <Send className="w-4 h-4 text-emerald-400" />
-                        <h4 className="text-sm font-semibold text-white">IM Messages & Chat Telemetry</h4>
+                        <Send className="w-4 h-4 text-emerald-600" />
+                        <h4 className="text-sm font-semibold text-slate-900">IM Messages & Chat Telemetry</h4>
                       </div>
                       <span className="text-xs text-slate-500 font-medium">
                         {imTelemetry.length} {imTelemetry.length === 1 ? 'message' : 'messages'}
@@ -1749,10 +1772,10 @@ export default function App() {
 
                     <div className="overflow-y-auto max-h-[420px] flex flex-col gap-2 pr-1">
                       {imTelemetry.map((t) => (
-                        <div key={t.id} className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-xl hover:border-slate-700 transition-colors">
-                          <div className="text-sm font-medium text-slate-200 break-words">"{t.titleOrText}"</div>
+                        <div key={t.id} className="p-3 bg-white/80 border border-slate-200/90 rounded-xl hover:border-slate-300 transition-colors">
+                          <div className="text-sm font-medium text-slate-800 break-words">"{t.titleOrText}"</div>
                           <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
-                            <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-400 font-medium font-mono text-[11px]">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-emerald-600 font-medium font-mono text-[11px]">
                               {t.app}
                             </span>
                             <span className="font-mono">{new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
@@ -1776,20 +1799,20 @@ export default function App() {
 
         {/* TAB 3: TIME QUOTAS & BEDTIME */}
         {activeTab === 'limits' && (
-          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl max-w-4xl flex flex-col gap-6">
-            <div className="border-b border-slate-800 pb-4">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-blue-400" /> Daily Time Quotas & Schedule
+          <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl max-w-4xl flex flex-col gap-6">
+            <div className="border-b border-slate-200 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-blue-600" /> Daily Time Quotas & Schedule
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-slate-500 mt-1">
                 Configure global allowances, category limits, 5-minute advance warnings, and bedtime curfews.
               </p>
             </div>
 
             {/* Global daily limit */}
             <div>
-              <label className="block text-sm font-semibold text-slate-200 mb-2">
-                Daily Global Screen Time Limit: <span className="text-blue-400">{formatSeconds(currentDevice.policy.dailyGlobalLimitSeconds)}</span>
+              <label className="block text-sm font-semibold text-slate-800 mb-2">
+                Daily Global Screen Time Limit: <span className="text-blue-600">{formatSeconds(currentDevice.policy.dailyGlobalLimitSeconds)}</span>
               </label>
               <input
                 type="range"
@@ -1804,7 +1827,7 @@ export default function App() {
                   };
                   handleSavePolicy(updated);
                 }}
-                className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                className="w-full accent-blue-500 h-2 bg-slate-100 rounded-lg cursor-pointer"
               />
               <div className="flex justify-between text-xs text-slate-500 mt-1">
                 <span>Off (0h)</span>
@@ -1815,10 +1838,53 @@ export default function App() {
               </div>
             </div>
 
+            {/* Per-weekday limits */}
+            <div className="p-4 bg-slate-200/60 border border-slate-200 rounded-xl">
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-sm font-semibold text-slate-800">Different limit each day of the week</span>
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-blue-600"
+                  checked={Array.isArray(currentDevice.policy.dailyLimitsByWeekday)}
+                  onChange={(e) => toggleWeekdaySchedule(e.target.checked)}
+                />
+              </label>
+              {Array.isArray(currentDevice.policy.dailyLimitsByWeekday) && (
+                <>
+                  <p className="text-xs text-slate-500 mt-2 mb-3">Hours per day. Leave blank to use the default limit above.</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {WEEKDAYS.map((day, i) => {
+                      const secs = currentDevice.policy.dailyLimitsByWeekday?.[i];
+                      const hours = typeof secs === 'number' ? String(Math.round((secs / 3600) * 100) / 100) : '';
+                      return (
+                        <div key={day} className="flex flex-col gap-1">
+                          <span className="text-xs font-medium text-slate-600">{day}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="24"
+                            step="0.5"
+                            defaultValue={hours}
+                            placeholder="default"
+                            onBlur={(e) => {
+                              const next = e.target.value.trim() === '' ? '' : String(parseFloat(e.target.value));
+                              const cur = hours;
+                              if (next !== cur) saveWeekdayLimit(i, e.target.value);
+                            }}
+                            className="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* 5-minute Warning Threshold */}
             <div>
-              <label className="block text-sm font-semibold text-slate-200 mb-2">
-                Advance Warning Notification: <span className="text-amber-400">{Math.round(currentDevice.policy.warningThresholdSeconds / 60)} minutes before lockout</span>
+              <label className="block text-sm font-semibold text-slate-800 mb-2">
+                Advance Warning Notification: <span className="text-amber-600">{Math.round(currentDevice.policy.warningThresholdSeconds / 60)} minutes before lockout</span>
               </label>
               <input
                 type="range"
@@ -1833,16 +1899,16 @@ export default function App() {
                   };
                   handleSavePolicy(updated);
                 }}
-                className="w-full accent-amber-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+                className="w-full accent-amber-500 h-2 bg-slate-100 rounded-lg cursor-pointer"
               />
             </div>
 
             {/* Bedtime Curfew */}
-            <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl">
+            <div className="p-4 bg-slate-200/60 border border-slate-200 rounded-xl">
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-200">Bedtime Curfew Lockout</h3>
-                  <p className="text-xs text-slate-400">Forces immediate logoff during sleeping hours.</p>
+                  <h3 className="text-sm font-semibold text-slate-800">Bedtime Curfew Lockout</h3>
+                  <p className="text-xs text-slate-500">Forces immediate logoff during sleeping hours.</p>
                 </div>
                 <input
                   type="checkbox"
@@ -1862,9 +1928,9 @@ export default function App() {
               </div>
 
               {currentDevice.policy.bedtime?.enabled && (
-                <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-800">
+                <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-200">
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Curfew Start (Lock PC)</label>
+                    <label className="block text-xs text-slate-500 mb-1">Curfew Start (Lock PC)</label>
                     <input
                       type="time"
                       value={`${String(currentDevice.policy.bedtime.startHour).padStart(2, '0')}:${String(currentDevice.policy.bedtime.startMinute).padStart(2, '0')}`}
@@ -1880,11 +1946,11 @@ export default function App() {
                         };
                         handleSavePolicy(updated);
                       }}
-                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white w-full"
+                      className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-900 w-full"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Curfew End (Unlock PC)</label>
+                    <label className="block text-xs text-slate-500 mb-1">Curfew End (Unlock PC)</label>
                     <input
                       type="time"
                       value={`${String(currentDevice.policy.bedtime.endHour).padStart(2, '0')}:${String(currentDevice.policy.bedtime.endMinute).padStart(2, '0')}`}
@@ -1900,7 +1966,7 @@ export default function App() {
                         };
                         handleSavePolicy(updated);
                       }}
-                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white w-full"
+                      className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-900 w-full"
                     />
                   </div>
                 </div>
@@ -1909,18 +1975,18 @@ export default function App() {
 
             {/* Category Limits */}
             <div>
-              <h3 className="text-sm font-semibold text-slate-200 mb-3">Category Quotas</h3>
+              <h3 className="text-sm font-semibold text-slate-800 mb-3">Category Quotas</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {['Games', 'Social', 'Browsers', 'Media'].map((cat) => {
                   const limit = currentDevice.policy.categoryLimits?.find((c) => c.category === cat)?.dailyLimitSeconds || 0;
                   return (
-                    <div key={cat} className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl">
+                    <div key={cat} className="p-4 bg-slate-200/60 border border-slate-200 rounded-xl">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           {getCategoryIcon(cat)}
-                          <span className="text-sm font-semibold text-white">{cat}</span>
+                          <span className="text-sm font-semibold text-slate-900">{cat}</span>
                         </div>
-                        <span className="text-xs text-blue-400 font-mono font-medium">
+                        <span className="text-xs text-blue-600 font-mono font-medium">
                           {limit > 0 ? formatSeconds(limit) : 'Unlimited'}
                         </span>
                       </div>
@@ -1944,7 +2010,7 @@ export default function App() {
                             categoryLimits: existingLimits
                           });
                         }}
-                        className="w-full accent-blue-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                        className="w-full accent-blue-500 h-1.5 bg-slate-100 rounded-lg cursor-pointer"
                       />
                     </div>
                   );
@@ -1956,44 +2022,44 @@ export default function App() {
 
         {/* TAB 3: APP RULES */}
         {activeTab === 'apps' && (
-          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
-            <div className="border-b border-slate-800 pb-4">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Settings className="w-5 h-5 text-blue-400" /> Application Rules & Limits
+          <div className="bg-white/70 border border-slate-200 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
+            <div className="border-b border-slate-200 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-blue-600" /> Application Rules & Limits
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-slate-500 mt-1">
                 Customize limits or permanently block specific executable files (.exe).
               </p>
             </div>
 
             {/* Add App Form */}
-            <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="p-4 bg-slate-200/70 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Executable Name</label>
+                <label className="block text-xs text-slate-500 mb-1">Executable Name</label>
                 <input
                   type="text"
                   placeholder="e.g. RobloxPlayerBeta.exe"
                   value={newAppExe}
                   onChange={(e) => setNewAppExe(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Display Name</label>
+                <label className="block text-xs text-slate-500 mb-1">Display Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Roblox"
                   value={newAppDisplayName}
                   onChange={(e) => setNewAppDisplayName(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Category</label>
+                <label className="block text-xs text-slate-500 mb-1">Category</label>
                 <select
                   value={newAppCategory}
                   onChange={(e) => setNewAppCategory(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
                 >
                   <option value="Games">Games</option>
                   <option value="Browsers">Browsers</option>
@@ -2006,18 +2072,18 @@ export default function App() {
               </div>
               <div className="flex items-end gap-2">
                 <div className="flex-1">
-                  <label className="block text-xs text-slate-400 mb-1">Limit (Mins, opt)</label>
+                  <label className="block text-xs text-slate-500 mb-1">Limit (Mins, opt)</label>
                   <input
                     type="number"
                     placeholder="e.g. 45"
                     value={newAppLimitMinutes}
                     onChange={(e) => setNewAppLimitMinutes(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white"
+                    className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
                   />
                 </div>
                 <button
                   onClick={handleAddAppRule}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-slate-900 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
                 >
                   <PlusCircle className="w-4 h-4" /> Add Rule
                 </button>
@@ -2025,9 +2091,9 @@ export default function App() {
             </div>
 
             {/* App Rules Table */}
-            <div className="overflow-x-auto border border-slate-800 rounded-xl">
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-800">
+                <thead className="bg-slate-200/80 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3">Executable</th>
                     <th className="px-4 py-3">Display Name</th>
@@ -2036,22 +2102,22 @@ export default function App() {
                     <th className="px-4 py-3">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                <tbody className="divide-y divide-slate-200/60 text-slate-700">
                   {currentDevice.policy.appRules.map((rule) => (
-                    <tr key={rule.executableName} className="hover:bg-slate-800/30">
-                      <td className="px-4 py-3 font-mono text-slate-200">{rule.executableName}</td>
-                      <td className="px-4 py-3 font-medium text-white">{rule.displayName}</td>
+                    <tr key={rule.executableName} className="hover:bg-slate-100/30">
+                      <td className="px-4 py-3 font-mono text-slate-800">{rule.executableName}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{rule.displayName}</td>
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300">
                           {getCategoryIcon(rule.category)}
                           {rule.category}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         {rule.isBlockedAlways ? (
-                          <span className="text-red-400 font-semibold">Blocked Always</span>
+                          <span className="text-red-600 font-semibold">Blocked Always</span>
                         ) : rule.dailyLimitSeconds ? (
-                          <span className="text-blue-400 font-medium">{formatSeconds(rule.dailyLimitSeconds)}</span>
+                          <span className="text-blue-600 font-medium">{formatSeconds(rule.dailyLimitSeconds)}</span>
                         ) : (
                           <span className="text-slate-500">Inherits category limit</span>
                         )}
@@ -2059,7 +2125,7 @@ export default function App() {
                       <td className="px-4 py-3">
                         <button
                           onClick={() => handleDeleteAppRule(rule.executableName)}
-                          className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/10 transition"
+                          className="text-red-600 hover:text-red-600 p-1 rounded hover:bg-red-500/10 transition"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -2075,7 +2141,7 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-600">
+      <footer className="border-t border-slate-300 py-4 text-center text-xs text-slate-600">
         Project Watchtower • Windows 11 Screen Time & Parental Control Platform
       </footer>
     </div>

@@ -31,10 +31,11 @@ export interface BedtimeSchedule {
 
 export interface DevicePolicy {
   deviceId: string;
-  dailyGlobalLimitSeconds: number; // Maximum total screen time across all apps (e.g. 14400 for 4 hours)
+  dailyGlobalLimitSeconds: number; // Default max total screen time across all apps (e.g. 14400 for 4 hours)
+  dailyLimitsByWeekday?: (number | null)[]; // Optional per-weekday limits (7 entries, 0=Sunday); null = use default
   warningThresholdSeconds: number; // 300 for 5 minutes
   emergencyLock: boolean; // Parent toggles instant lock
-  bonusSecondsToday: number; // Extra granted time today
+  bonusSecondsToday: number; // Today-only adjustment (may be negative); resets daily, never changes the base limit
   bedtime: BedtimeSchedule;
   categoryLimits: CategoryLimit[];
   appRules: AppRule[];
