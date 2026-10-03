@@ -262,8 +262,8 @@ export function registerApiRoutes(
     return { success: true, policy: updated };
   });
 
-  // Add or remove screen time (extraMinutes may be negative). Removal consumes
-  // bonus first, then shortens the daily quota. No password confirmation.
+  // Add or remove screen time for TODAY ONLY (extraMinutes may be negative).
+  // Adjusts today's bonus; never changes the configured base limit. No password.
   server.post<{ Params: { id: string }; Body: { extraMinutes: number } }>('/api/devices/:id/grant-time', async (req, reply) => {
     const { extraMinutes } = req.body;
     if (typeof extraMinutes !== 'number' || !Number.isFinite(extraMinutes) || extraMinutes === 0) {
@@ -287,18 +287,13 @@ export function registerApiRoutes(
 
     wsHub.broadcastPolicyUpdate(policy);
     const bonusMin = Math.round((policy.bonusSecondsToday || 0) / 60);
-    const limitMin = Math.round((policy.dailyGlobalLimitSeconds || 0) / 60);
     notifySlack(
       extraMinutes > 0
-        ? `➕ Watchtower added +${extraMinutes}m to *${req.params.id}* (bonus today: ${bonusMin}m).`
-        : `➖ Watchtower removed ${Math.abs(extraMinutes)}m from *${req.params.id}* (bonus: ${bonusMin}m, daily limit: ${limitMin}m).`
+        ? `➕ Watchtower added +${extraMinutes}m to *${req.params.id}* today (today's adjustment: ${bonusMin >= 0 ? '+' : ''}${bonusMin}m).`
+        : `➖ Watchtower removed ${Math.abs(extraMinutes)}m from *${req.params.id}* today (today's adjustment: ${bonusMin >= 0 ? '+' : ''}${bonusMin}m).`
     );
 
-    return {
-      success: true,
-      bonusSecondsToday: policy.bonusSecondsToday,
-      dailyGlobalLimitSeconds: policy.dailyGlobalLimitSeconds
-    };
+    return { success: true, bonusSecondsToday: policy.bonusSecondsToday };
   });
 
   // Toggle emergency lock

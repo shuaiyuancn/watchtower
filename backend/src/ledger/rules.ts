@@ -67,6 +67,21 @@ export function resolveAppCategory(executableName: string, policy: DevicePolicy)
   return { category: 'Other' };
 }
 
+/**
+ * The base daily screen-time limit for the given day. If the policy defines a
+ * per-weekday schedule (7 entries, index 0 = Sunday), that value wins; otherwise
+ * the single dailyGlobalLimitSeconds applies. `now` is the device-local instant,
+ * so getUTCDay() yields the device's local weekday.
+ */
+export function getBaseDailyLimitSeconds(policy: DevicePolicy, now: Date = new Date()): number {
+  const schedule = policy.dailyLimitsByWeekday;
+  if (Array.isArray(schedule) && schedule.length === 7) {
+    const v = schedule[now.getUTCDay()];
+    if (typeof v === 'number' && v >= 0) return v;
+  }
+  return policy.dailyGlobalLimitSeconds;
+}
+
 export function isBedtimeActive(policy: DevicePolicy, now: Date = new Date()): boolean {
   if (!policy.bedtime || !policy.bedtime.enabled) {
     return false;
@@ -123,10 +138,16 @@ export function evaluateEnforcement(
   }
 
   // 3. Global Screen Time Limit Check (applies regardless of foreground app)
-  const effectiveGlobalLimit = policy.dailyGlobalLimitSeconds + (policy.bonusSecondsToday || 0);
+  // Base limit can vary by weekday; today's bonus (which may be negative, i.e.
+  // time removed for the day) adjusts only today's effective allowance and
+  // never the configured base.
+  const baseDailyLimit = getBaseDailyLimitSeconds(policy, now);
+  const effectiveGlobalLimit = baseDailyLimit + (policy.bonusSecondsToday || 0);
   const remainingGlobalSeconds = Math.max(0, effectiveGlobalLimit - usage.totalActiveSeconds);
 
-  if (effectiveGlobalLimit > 0 && remainingGlobalSeconds <= 0) {
+  // Enforce whenever a base limit is configured (even if a negative bonus has
+  // pushed the effective allowance to zero).
+  if (baseDailyLimit > 0 && remainingGlobalSeconds <= 0) {
     return {
       shouldKillApp: !isSystemSurface,
       shouldLogoffUser: true,

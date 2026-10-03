@@ -342,7 +342,7 @@ describe('Watchtower Authentication & Password Protection', () => {
     await app.close();
   }, 15000);
 
-  it('adds/removes time without a password; removal cuts into the daily quota', async () => {
+  it('adds/removes time for today only (no password; base limit untouched)', async () => {
     const { createServer } = await import('../server.js');
     process.env.DATA_DIR = tempDir;
     const { app } = await createServer();
@@ -355,24 +355,27 @@ describe('Watchtower Authentication & Password Protection', () => {
     const { token } = JSON.parse(login.body);
     const auth = { authorization: `Bearer ${token}`, 'x-forwarded-for': '10.9.0.1' };
 
-    // Add +240 min with NO password confirmation -> 200.
+    // Add +60 min with NO password confirmation -> 200.
     const add = await app.inject({
       method: 'POST', url: '/api/devices/PC-1/grant-time',
-      headers: auth, payload: { extraMinutes: 240 }
+      headers: auth, payload: { extraMinutes: 60 }
     });
     expect(add.statusCode).toBe(200);
-    expect(JSON.parse(add.body).bonusSecondsToday).toBe(240 * 60);
+    expect(JSON.parse(add.body).bonusSecondsToday).toBe(60 * 60);
 
-    // Remove 600 min: 240 comes off bonus (-> 0), remaining 360 off the daily
-    // limit (default 86400s = 1440m -> 1080m).
+    // Remove 120 min: today's adjustment goes to -60m; the base daily limit is
+    // NOT changed.
     const remove = await app.inject({
       method: 'POST', url: '/api/devices/PC-1/grant-time',
-      headers: auth, payload: { extraMinutes: -600 }
+      headers: auth, payload: { extraMinutes: -120 }
     });
     expect(remove.statusCode).toBe(200);
-    const body = JSON.parse(remove.body);
-    expect(body.bonusSecondsToday).toBe(0);
-    expect(body.dailyGlobalLimitSeconds).toBe(1080 * 60);
+    expect(JSON.parse(remove.body).bonusSecondsToday).toBe(-60 * 60);
+
+    // Base daily limit is still the default.
+    const dev = await app.inject({ method: 'GET', url: '/api/devices', headers: auth });
+    const entry = JSON.parse(dev.body).devices.find((d: any) => d.deviceId === 'PC-1');
+    expect(entry.policy.dailyGlobalLimitSeconds).toBe(86400);
 
     await app.close();
   }, 15000);
