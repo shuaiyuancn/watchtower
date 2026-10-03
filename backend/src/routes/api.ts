@@ -96,19 +96,6 @@ export function registerApiRoutes(
     return '';
   }
 
-  // Extra confirmation for sensitive actions: require the parent password in
-  // the request body even when a valid session token is present, so a lifted
-  // token alone cannot grant time, unlock, or change quotas.
-  function requirePasswordConfirmation(req: FastifyRequest, reply: FastifyReply): boolean {
-    const pw = (req.body as { confirmPassword?: string } | undefined)?.confirmPassword;
-    if (typeof pw !== 'string' || !store.verifyPassword(pw)) {
-      recordFailedAttempt(getClientIp(req));
-      reply.code(401).send({ error: 'Password confirmation required for this action.' });
-      return false;
-    }
-    return true;
-  }
-
   // Hook to protect /api/devices/* routes. Device enrollment is exempt: it
   // authenticates with the enrollment secret, not a dashboard session token.
   server.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -238,15 +225,12 @@ export function registerApiRoutes(
     return { policy };
   });
 
-  // Update device policy (quotas / bedtime). Requires password confirmation.
-  server.post<{ Params: { id: string }; Body: Partial<DevicePolicy> & { confirmPassword?: string } }>('/api/devices/:id/policy', async (req, reply) => {
-    if (!requirePasswordConfirmation(req, reply)) return;
+  // Update device policy (quotas / bedtime). Authenticated by session token.
+  server.post<{ Params: { id: string }; Body: Partial<DevicePolicy> }>('/api/devices/:id/policy', async (req, reply) => {
     const existing = store.getPolicy(req.params.id);
-    // Never let confirmPassword leak into the stored policy.
-    const { confirmPassword, ...patch } = req.body || {};
     const updated: DevicePolicy = {
       ...existing,
-      ...patch,
+      ...(req.body || {}),
       deviceId: req.params.id
     };
 
@@ -297,10 +281,8 @@ export function registerApiRoutes(
   });
 
   // Toggle emergency lock
-  server.post<{ Params: { id: string }; Body: { locked: boolean; confirmPassword?: string } }>('/api/devices/:id/emergency-lock', async (req, reply) => {
+  server.post<{ Params: { id: string }; Body: { locked: boolean } }>('/api/devices/:id/emergency-lock', async (req, reply) => {
     const { locked } = req.body;
-    // Disabling the lock (giving access back) requires re-confirmation.
-    if (!locked && !requirePasswordConfirmation(req, reply)) return;
     const policy = store.setEmergencyLock(req.params.id, Boolean(locked));
 
     wsHub.sendCommandToClient(req.params.id, {
