@@ -808,7 +808,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-200 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-slate-900">
       {/* Toast Notification */}
       {notification && (
-        <div className="fixed top-5 right-5 z-50 bg-white border border-blue-500/50 text-blue-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in">
+        <div className="fixed left-4 right-4 bottom-4 sm:left-auto sm:right-5 sm:top-5 sm:bottom-auto sm:max-w-sm z-[60] bg-white border border-blue-500/50 text-blue-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in">
           <CheckCircle2 className="w-5 h-5 text-blue-600" />
           <span className="text-sm font-medium">{notification}</span>
         </div>
@@ -817,7 +817,7 @@ export default function App() {
       {/* Parental Password Lock Screen Gate */}
       {!isAuthenticated && (
         <div className="fixed inset-0 z-50 bg-slate-200/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
             
             <div className="p-4 bg-blue-600/10 border border-blue-500/20 rounded-2xl text-blue-600 mb-5 shadow-lg shadow-blue-500/5">
@@ -864,7 +864,7 @@ export default function App() {
                 className={`w-full font-semibold py-3.5 px-4 rounded-2xl transition-all flex items-center justify-center gap-2 ${
                   cooldownSeconds > 0
                     ? 'bg-slate-100/80 border border-amber-500/30 text-amber-600 cursor-not-allowed shadow-inner'
-                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-slate-900 shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 disabled:opacity-50'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 disabled:opacity-50'
                 }`}
               >
                 {isLoggingIn ? (
@@ -972,7 +972,7 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={isChangingPassword}
-                  className="px-5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-slate-900 rounded-xl shadow-md shadow-blue-600/20 transition-all disabled:opacity-50"
+                  className="px-5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-md shadow-blue-600/20 transition-all disabled:opacity-50"
                 >
                   {isChangingPassword ? 'Saving...' : 'Update Password'}
                 </button>
@@ -984,7 +984,7 @@ export default function App() {
 
       {/* Header */}
       <header className="border-b border-slate-200/80 bg-white/60 backdrop-blur sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 py-2 flex items-center justify-between flex-wrap gap-y-2">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-600/20 border border-blue-500/30 rounded-xl text-blue-600">
               <Shield className="w-6 h-6" />
@@ -992,20 +992,20 @@ export default function App() {
             <div>
               <h1 className="text-lg font-bold tracking-tight text-slate-900 flex items-center gap-2">
                 WATCHTOWER
-                <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                <span className="hidden sm:inline-flex text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
                   Control Center
                 </span>
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
             {/* Device Selector */}
             {devices.length > 0 && (
               <select
                 value={selectedDeviceId}
                 onChange={(e) => setSelectedDeviceId(e.target.value)}
-                className="bg-slate-100/80 border border-slate-300/80 text-slate-800 text-xs rounded-xl px-3 py-1.5 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="bg-slate-100/80 border border-slate-300/80 text-slate-800 text-xs rounded-xl px-3 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer max-w-[42vw] sm:max-w-none truncate"
               >
                 {devices.map((d) => (
                   <option key={d.deviceId} value={d.deviceId} className="bg-white text-slate-800">
@@ -1016,49 +1016,51 @@ export default function App() {
             )}
 
             {/* Live connection badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100/70 border border-slate-300/60 text-xs">
+            <div className="flex items-center gap-2 px-2.5 sm:px-3 py-2 rounded-full bg-slate-100/70 border border-slate-300/60 text-xs">
               <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-              <span className="text-slate-700 font-medium">{wsConnected ? 'Live Sync' : 'Reconnecting...'}</span>
+              <span className="hidden sm:inline text-slate-700 font-medium">{wsConnected ? 'Live Sync' : 'Reconnecting...'}</span>
             </div>
 
             {/* Change Password Button */}
             <button
               onClick={() => setIsChangePasswordOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2.5 min-h-[40px] rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all cursor-pointer"
               title="Change Dashboard Password"
             >
-              <Key className="w-3.5 h-3.5 text-amber-600" />
+              <Key className="w-4 h-4 text-amber-600" />
               <span className="hidden sm:inline">Password</span>
             </button>
 
             {/* Lock Dashboard Button */}
             <button
               onClick={handleLockDashboard}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2.5 min-h-[40px] rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all cursor-pointer"
               title="Lock Dashboard"
             >
-              <Lock className="w-3.5 h-3.5 text-slate-500" />
+              <Lock className="w-4 h-4 text-slate-500" />
               <span className="hidden sm:inline">Lock</span>
             </button>
 
             {/* Emergency Lock Toggle */}
             <button
               onClick={handleToggleEmergencyLock}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all shadow-lg ${
+              className={`flex items-center gap-2 px-3 sm:px-4 py-2.5 min-h-[40px] rounded-xl text-xs font-semibold tracking-wide transition-all shadow-lg ${
                 currentDevice.policy.emergencyLock
-                  ? 'bg-red-600 hover:bg-red-500 text-slate-900 shadow-red-900/30 ring-2 ring-red-400'
+                  ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-900/30 ring-2 ring-red-400'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300'
               }`}
             >
               {currentDevice.policy.emergencyLock ? (
                 <>
                   <Lock className="w-4 h-4" />
-                  LOCKED (Click to Unlock)
+                  <span className="hidden sm:inline">LOCKED (Click to Unlock)</span>
+                  <span className="sm:hidden">Locked</span>
                 </>
               ) : (
                 <>
                   <Unlock className="w-4 h-4 text-emerald-600" />
-                  Lock PC Now
+                  <span className="hidden sm:inline">Lock PC Now</span>
+                  <span className="sm:hidden">Lock PC</span>
                 </>
               )}
             </button>
@@ -1166,7 +1168,7 @@ export default function App() {
                     {currentDevice.session?.currentApp && (
                       <button
                         onClick={handleKillActiveApp}
-                        className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-500/30 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                        className="px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-500/30 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap"
                       >
                         <XOctagon className="w-4 h-4" /> Close App
                       </button>
@@ -1175,33 +1177,33 @@ export default function App() {
                 </div>
 
                 {/* Quick Bonus Time Grant Bar */}
-                <div className="flex items-center justify-between p-4 bg-slate-100/40 rounded-xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-slate-100/40 rounded-xl border border-slate-200">
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-blue-600" />
                     <span className="text-sm font-medium text-slate-700">Quick Grant Time:</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => handleGrantTime(15)}
-                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +15 Mins
                     </button>
                     <button
                       onClick={() => handleGrantTime(30)}
-                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +30 Mins
                     </button>
                     <button
                       onClick={() => handleGrantTime(60)}
-                      className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-600 border border-blue-500/30 rounded-lg text-xs font-semibold transition"
                     >
                       +1 Hour
                     </button>
                     <button
                       onClick={() => handleGrantTime(-15)}
-                      className="px-3 py-1.5 bg-slate-200/40 hover:bg-slate-200/60 text-slate-700 border border-slate-400/40 rounded-lg text-xs font-semibold transition"
+                      className="px-3 py-2 bg-slate-200/40 hover:bg-slate-200/60 text-slate-700 border border-slate-400/40 rounded-lg text-xs font-semibold transition"
                       title="Remove 15 minutes of bonus"
                     >
                       −15 Mins
@@ -1209,7 +1211,7 @@ export default function App() {
                     <button
                       onClick={handleClearBonus}
                       disabled={(currentDevice.policy?.bonusSecondsToday || 0) <= 0}
-                      className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-600 border border-rose-500/30 rounded-lg text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="px-3 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-600 border border-rose-500/30 rounded-lg text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
                       title="Remove all bonus time granted today"
                     >
                       Clear Bonus{(currentDevice.policy?.bonusSecondsToday || 0) > 0 ? ` (${Math.round((currentDevice.policy!.bonusSecondsToday || 0) / 60)}m)` : ''}
@@ -1649,9 +1651,9 @@ export default function App() {
                   <div className="flex items-center bg-slate-200/80 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
                     <button
                       onClick={() => setTelemetryTypeFilter('ALL')}
-                      className={`px-3 py-1.5 rounded-lg transition-colors ${
+                      className={`px-3 py-2 rounded-lg transition-colors ${
                         telemetryTypeFilter === 'ALL'
-                          ? 'bg-blue-600 text-slate-900'
+                          ? 'bg-blue-600 text-white'
                           : 'text-slate-500 hover:text-slate-900'
                       }`}
                     >
@@ -1659,9 +1661,9 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => setTelemetryTypeFilter('YOUTUBE')}
-                      className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                      className={`px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5 ${
                         telemetryTypeFilter === 'YOUTUBE'
-                          ? 'bg-red-600 text-slate-900'
+                          ? 'bg-red-600 text-white'
                           : 'text-slate-500 hover:text-slate-900'
                       }`}
                     >
@@ -1670,9 +1672,9 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => setTelemetryTypeFilter('IM_MESSAGE')}
-                      className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                      className={`px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5 ${
                         telemetryTypeFilter === 'IM_MESSAGE'
-                          ? 'bg-emerald-600 text-slate-900'
+                          ? 'bg-emerald-600 text-white'
                           : 'text-slate-500 hover:text-slate-900'
                       }`}
                     >
@@ -1925,7 +1927,7 @@ export default function App() {
                         };
                         handleSavePolicy(updated);
                       }}
-                      className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-900 w-full"
+                      className="bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 w-full"
                     />
                   </div>
                   <div>
@@ -1945,7 +1947,7 @@ export default function App() {
                         };
                         handleSavePolicy(updated);
                       }}
-                      className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-900 w-full"
+                      className="bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 w-full"
                     />
                   </div>
                 </div>
@@ -2020,7 +2022,7 @@ export default function App() {
                   placeholder="e.g. RobloxPlayerBeta.exe"
                   value={newAppExe}
                   onChange={(e) => setNewAppExe(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900"
                 />
               </div>
               <div>
@@ -2030,7 +2032,7 @@ export default function App() {
                   placeholder="e.g. Roblox"
                   value={newAppDisplayName}
                   onChange={(e) => setNewAppDisplayName(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900"
                 />
               </div>
               <div>
@@ -2038,7 +2040,7 @@ export default function App() {
                 <select
                   value={newAppCategory}
                   onChange={(e) => setNewAppCategory(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900"
                 >
                   <option value="Games">Games</option>
                   <option value="Browsers">Browsers</option>
@@ -2057,12 +2059,12 @@ export default function App() {
                     placeholder="e.g. 45"
                     value={newAppLimitMinutes}
                     onChange={(e) => setNewAppLimitMinutes(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900"
+                    className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900"
                   />
                 </div>
                 <button
                   onClick={handleAddAppRule}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-slate-900 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
                 >
                   <PlusCircle className="w-4 h-4" /> Add Rule
                 </button>
