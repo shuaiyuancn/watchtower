@@ -427,6 +427,9 @@ export default function App() {
                 : d
             )
           );
+        } else if (data.type === 'DEVICE_REMOVED') {
+          setDevices((prev) => prev.filter((d) => d.deviceId !== data.deviceId));
+          setSelectedDeviceId((curr) => (curr === data.deviceId ? '' : curr));
         }
       } catch (err) {
         console.error('Error parsing WS message:', err);
@@ -609,6 +612,25 @@ export default function App() {
       });
       if (res.ok) {
         showNotification(newLockState ? '🚨 PC Locked Immediately' : '🔓 PC Unlocked');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRemoveDevice = async () => {
+    const id = currentDevice.deviceId;
+    if (!id) return;
+    if (!window.confirm(`Remove device "${id}" and all of its stored data? This cannot be undone.`)) return;
+    try {
+      const res = await authFetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        showNotification(`Removed device ${id}`);
+        setDevices((prev) => {
+          const next = prev.filter((d) => d.deviceId !== id);
+          setSelectedDeviceId(next[0]?.deviceId || '');
+          return next;
+        });
       }
     } catch (e) {
       console.error(e);
@@ -1015,6 +1037,18 @@ export default function App() {
               </select>
             )}
 
+            {/* Remove selected device */}
+            {devices.length > 0 && currentDevice.deviceId && (
+              <button
+                onClick={handleRemoveDevice}
+                className="flex items-center gap-1.5 px-3 py-2.5 min-h-[40px] rounded-xl text-xs font-medium bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-600 border border-slate-300 hover:border-red-300 transition-all cursor-pointer"
+                title={`Remove device ${currentDevice.deviceId}`}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span className="hidden sm:inline">Remove</span>
+              </button>
+            )}
+
             {/* Live connection badge */}
             <div className="flex items-center gap-2 px-2.5 sm:px-3 py-2 rounded-full bg-slate-100/70 border border-slate-300/60 text-xs">
               <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
@@ -1072,7 +1106,8 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col gap-6">
         
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-1">
+        <div className="relative">
+        <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-1 snap-x no-scrollbar [&>button]:snap-start">
           <button
             onClick={() => setActiveTab('monitor')}
             className={`pb-3 px-4 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
@@ -1113,6 +1148,9 @@ export default function App() {
           >
             <Settings className="w-4 h-4" /> App Rules
           </button>
+        </div>
+          {/* Right-edge fade hinting the tabs scroll horizontally on mobile */}
+          <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-1 w-8 bg-gradient-to-l from-slate-200 to-transparent" />
         </div>
 
         {/* TAB 1: LIVE MONITOR */}
@@ -1554,8 +1592,51 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Timeline Table */}
-              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-200/40">
+              {/* Timeline — card list on mobile */}
+              <div className="sm:hidden flex flex-col gap-3">
+                {filteredTimeline.map((log) => {
+                  const startDate = new Date(log.timestamp);
+                  const endDate = log.endTime ? new Date(log.endTime) : new Date(startDate.getTime() + log.durationSeconds * 1000);
+                  const startStr = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const endStr = endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const timeDisplay = log.durationSeconds >= 10 ? `${startStr} – ${endStr}` : startStr;
+                  return (
+                    <div key={log.id} className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0 font-semibold text-slate-900">
+                          {getCategoryIcon(log.category)}
+                          <span className="truncate">{log.app}</span>
+                        </div>
+                        <span className="font-mono text-blue-600 font-medium text-sm whitespace-nowrap">{formatSeconds(log.durationSeconds)}</span>
+                      </div>
+                      <div className="font-mono text-xs text-slate-500">{timeDisplay}</div>
+                      {log.windowTitle && log.windowTitle !== '<No title>' && (
+                        <div className="text-xs text-slate-700 break-words">{log.windowTitle}</div>
+                      )}
+                      <select
+                        value={log.category}
+                        disabled={savingCategoryApp === log.app}
+                        onChange={(e) => handleChangeAppCategory(log.app, e.target.value)}
+                        title="Change category for this app (saved and applied to history)"
+                        className={`mt-1 w-full px-2 py-2 rounded-lg text-xs font-medium border cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${getCategoryBadgeClass(log.category)}`}
+                      >
+                        {['Games', 'Browsers', 'Social', 'Media', 'Education', 'Productivity', 'System', 'Other'].map((c) => (
+                          <option key={c} value={c} className="bg-white text-slate-800">{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+                {filteredTimeline.length === 0 && (
+                  <div className="py-12 text-center text-slate-500 rounded-xl border border-slate-200 bg-slate-200/40">
+                    <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2 opacity-50" />
+                    No activity records found for this date and filter selection.
+                  </div>
+                )}
+              </div>
+
+              {/* Timeline Table (sm and up) */}
+              <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200 bg-slate-200/40">
                 <table className="w-full text-left text-xs text-slate-700">
                   <thead className="bg-white/90 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>

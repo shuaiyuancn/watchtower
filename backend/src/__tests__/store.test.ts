@@ -320,6 +320,27 @@ describe('Watchtower SQLite Store', () => {
     expect(timeline2[1].durationSeconds).toBe(15);
   });
 
+  it('deletes a device and all of its stored data', () => {
+    const today = new Date().toISOString().split('T')[0];
+    store.recordHeartbeat({
+      deviceId: 'gone-pc', hostname: 'gone-pc', currentApp: 'chrome.exe',
+      windowTitle: 'x', isIdle: false, idleSeconds: 0, elapsedActiveDeltaSeconds: 10
+    });
+    expect(store.getAllDevices().some(d => d.deviceId === 'gone-pc')).toBe(true);
+    expect(store.getTimeline('gone-pc', today).length).toBeGreaterThan(0);
+
+    store.deleteDevice('gone-pc');
+
+    expect(store.getAllDevices().some(d => d.deviceId === 'gone-pc')).toBe(false);
+    expect(store.getTimeline('gone-pc', today).length).toBe(0);
+    expect(store.getDailyHistory('gone-pc').length).toBe(0);
+
+    // Stays gone after reopening the DB.
+    const reopened = new WatchtowerStore(tempDir);
+    expect(reopened.getAllDevices().some(d => d.deviceId === 'gone-pc')).toBe(false);
+    reopened.close();
+  });
+
   it('reassigns an app category, persists the rule, and re-labels history/usage', () => {
     const today = new Date().toISOString().split('T')[0];
     // chrome.exe defaults to Browsers.
