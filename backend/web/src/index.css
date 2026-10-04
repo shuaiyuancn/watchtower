@@ -18,3 +18,21 @@ body {
     font-size: 16px !important;
   }
 }
+
+/* Hide the scrollbar on horizontally-scrollable strips (e.g. the tab bar). */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Respect notch / safe-area insets when added to the home screen. */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

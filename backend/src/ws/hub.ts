@@ -245,6 +245,18 @@ export class WebSocketHub {
     }
   }
 
+  // Disconnect a device's socket (if any) and drop its in-memory hub state.
+  // Used when a device is removed from the dashboard.
+  public disconnectClient(deviceId: string): void {
+    const ws = this.clientSockets.get(deviceId);
+    if (ws) {
+      try { ws.close(4003, 'Device removed'); } catch { /* ignore */ }
+      this.clientSockets.delete(deviceId);
+    }
+    this.enfState.delete(deviceId);
+    this.broadcastToDashboards({ type: 'DEVICE_REMOVED', deviceId });
+  }
+
   public sendCommandToClient(deviceId: string, command: ServerCommand): boolean {
     const ws = this.clientSockets.get(deviceId);
     if (ws && ws.readyState === WebSocket.OPEN) {

@@ -219,6 +219,14 @@ export function registerApiRoutes(
     return { devices: store.getAllDevices() };
   });
 
+  // Permanently remove a device and all its data.
+  server.delete<{ Params: { id: string } }>('/api/devices/:id', async (req) => {
+    wsHub.disconnectClient(req.params.id);
+    store.deleteDevice(req.params.id);
+    notifySlack(`🗑️ Watchtower device removed from dashboard: *${req.params.id}*.`);
+    return { success: true, deviceId: req.params.id };
+  });
+
   // Get specific device policy
   server.get<{ Params: { id: string } }>('/api/devices/:id/policy', async (req) => {
     const policy = store.getPolicy(req.params.id);

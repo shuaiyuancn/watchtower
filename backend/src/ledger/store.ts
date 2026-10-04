@@ -747,6 +747,30 @@ export class WatchtowerStore {
     return policy;
   }
 
+  // Permanently remove a device and all of its stored data.
+  public deleteDevice(deviceId: string): void {
+    // In-memory state
+    this.policies.delete(deviceId);
+    this.activeSessions.delete(deviceId);
+    this.lastActivityMap.delete(deviceId);
+    for (const key of [...this.dailyUsage.keys()]) {
+      if (this.dailyUsage.get(key)?.deviceId === deviceId) {
+        this.dailyUsage.delete(key);
+      }
+    }
+    this.telemetryLogs = this.telemetryLogs.filter((e) => e.deviceId !== deviceId);
+
+    // Persistent state
+    try {
+      this.db.prepare('DELETE FROM policies WHERE device_id = ?;').run(deviceId);
+      this.db.prepare('DELETE FROM daily_usage WHERE device_id = ?;').run(deviceId);
+      this.db.prepare('DELETE FROM app_activity_logs WHERE device_id = ?;').run(deviceId);
+      this.db.prepare('DELETE FROM telemetry_events WHERE device_id = ?;').run(deviceId);
+    } catch (err) {
+      console.error('Failed to delete device from SQLite:', err);
+    }
+  }
+
   public recordTelemetry(event: Omit<TelemetryEvent, 'id'>): TelemetryEvent {
     const fullEvent: TelemetryEvent = {
       ...event,
