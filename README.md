@@ -18,6 +18,7 @@ Watchtower is a parental-control system for **Windows 11**. It pairs a lean nati
 - 🔒 **Forced logoff** on bedtime curfew, daily-limit exhaustion, emergency lock, or remote lock — a real `ExitWindowsEx` logoff (not a lock screen the user can reopen), **re-issued every heartbeat** so a re-login is kicked within seconds.
 - 🖥️ **Applies everywhere** — session controls fire even at the desktop / lock screen / with no window focused (not only inside apps).
 - 🛑 **Per-app & per-category limits** and always-blocked apps (`TerminateProcess`).
+- 📅 **Weekend-only categories** — mark a category (e.g. Games) as allowed only on Saturday/Sunday (device-local); its apps are closed Monday–Friday, and its daily quota still applies on weekends.
 - 🌍 **Timezone-correct** — bedtime, daily reset, and hour buckets are evaluated in the **device's local time** (the client reports its UTC offset), independent of where the server runs.
 - ⚠️ **5-minute warning** toast before time runs out.
 
