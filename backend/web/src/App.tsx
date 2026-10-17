@@ -44,6 +44,7 @@ interface AppRule {
 interface CategoryLimit {
   category: string;
   dailyLimitSeconds: number;
+  weekendOnly?: boolean;
 }
 
 interface BedtimeSchedule {
@@ -2040,7 +2041,23 @@ export default function App() {
               <h3 className="text-sm font-semibold text-slate-800 mb-3">Category Quotas</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {['Games', 'Social', 'Browsers', 'Media'].map((cat) => {
-                  const limit = currentDevice.policy.categoryLimits?.find((c) => c.category === cat)?.dailyLimitSeconds || 0;
+                  const config = currentDevice.policy.categoryLimits?.find((c) => c.category === cat);
+                  const limit = config?.dailyLimitSeconds || 0;
+                  const weekendOnly = Boolean(config?.weekendOnly);
+                  const saveCategory = (patch: Partial<CategoryLimit>) => {
+                    const existingLimits = [...(currentDevice.policy.categoryLimits || [])];
+                    const idx = existingLimits.findIndex((c) => c.category === cat);
+                    const next = { category: cat, dailyLimitSeconds: limit, weekendOnly, ...patch };
+                    if (idx >= 0) {
+                      existingLimits[idx] = next;
+                    } else {
+                      existingLimits.push(next);
+                    }
+                    handleSavePolicy({
+                      ...currentDevice.policy,
+                      categoryLimits: existingLimits
+                    });
+                  };
                   return (
                     <div key={cat} className="p-4 bg-slate-200/60 border border-slate-200 rounded-xl">
                       <div className="flex items-center justify-between mb-2">
@@ -2050,6 +2067,7 @@ export default function App() {
                         </div>
                         <span className="text-xs text-blue-600 font-mono font-medium">
                           {limit > 0 ? formatSeconds(limit) : 'Unlimited'}
+                          {weekendOnly && ' · Sat–Sun'}
                         </span>
                       </div>
                       <input
@@ -2058,22 +2076,18 @@ export default function App() {
                         max="14400"
                         step="900"
                         value={limit}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          const existingLimits = [...(currentDevice.policy.categoryLimits || [])];
-                          const idx = existingLimits.findIndex((c) => c.category === cat);
-                          if (idx >= 0) {
-                            existingLimits[idx] = { category: cat as any, dailyLimitSeconds: val };
-                          } else {
-                            existingLimits.push({ category: cat as any, dailyLimitSeconds: val });
-                          }
-                          handleSavePolicy({
-                            ...currentDevice.policy,
-                            categoryLimits: existingLimits
-                          });
-                        }}
+                        onChange={(e) => saveCategory({ dailyLimitSeconds: Number(e.target.value) })}
                         className="w-full accent-blue-500 h-1.5 bg-slate-100 rounded-lg cursor-pointer"
                       />
+                      <label className="flex items-center justify-between mt-3 cursor-pointer">
+                        <span className="text-xs text-slate-600">Weekends only (blocked Mon–Fri)</span>
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 accent-blue-600"
+                          checked={weekendOnly}
+                          onChange={(e) => saveCategory({ weekendOnly: e.target.checked })}
+                        />
+                      </label>
                     </div>
                   );
                 })}

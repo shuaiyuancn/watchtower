@@ -82,6 +82,12 @@ export function getBaseDailyLimitSeconds(policy: DevicePolicy, now: Date = new D
   return policy.dailyGlobalLimitSeconds;
 }
 
+/** Saturday or Sunday on the device-local clock (`now` is already shifted). */
+export function isWeekend(now: Date = new Date()): boolean {
+  const day = now.getUTCDay();
+  return day === 0 || day === 6;
+}
+
 export function isBedtimeActive(policy: DevicePolicy, now: Date = new Date()): boolean {
   if (!policy.bedtime || !policy.bedtime.enabled) {
     return false;
@@ -183,7 +189,19 @@ export function evaluateEnforcement(
     };
   }
 
-  // 4b. App-Specific Limit
+  // 4b. Weekend-only Category (blocked Monday-Friday)
+  const categoryLimitConfig = policy.categoryLimits.find(c => c.category === category);
+  if (categoryLimitConfig?.weekendOnly && !isWeekend(now)) {
+    return {
+      shouldKillApp: true,
+      shouldLogoffUser: false,
+      shouldWarn: true,
+      warningMessage: `${rule?.displayName || currentApp} (${category}) is only allowed on weekends.`,
+      reason: 'CATEGORY_WEEKEND_ONLY'
+    };
+  }
+
+  // 4c. App-Specific Limit
   let remainingAppSeconds = Infinity;
   if (rule && rule.dailyLimitSeconds && rule.dailyLimitSeconds > 0) {
     const usedAppSeconds = usage.appSeconds[normApp] || 0;
@@ -200,9 +218,8 @@ export function evaluateEnforcement(
     }
   }
 
-  // 4c. Category Limit
+  // 4d. Category Limit
   let remainingCategorySeconds = Infinity;
-  const categoryLimitConfig = policy.categoryLimits.find(c => c.category === category);
   if (categoryLimitConfig && categoryLimitConfig.dailyLimitSeconds > 0) {
     const usedCategorySeconds = usage.categorySeconds[category] || 0;
     remainingCategorySeconds = Math.max(0, categoryLimitConfig.dailyLimitSeconds - usedCategorySeconds);

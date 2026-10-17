@@ -190,4 +190,30 @@ describe('Watchtower Rules Engine', () => {
     expect(idleDesktop.shouldLogoffUser).toBe(false);
     expect(idleDesktop.shouldKillApp).toBe(false);
   });
+  it('blocks weekend-only categories Monday-Friday (device-local) and allows them on weekends', () => {
+    const weekendPolicy: DevicePolicy = {
+      ...mockPolicy,
+      categoryLimits: [{ category: 'Games', dailyLimitSeconds: 3600, weekendOnly: true }]
+    };
+    const friday = new Date('2026-08-21T15:00:00Z');
+    const saturday = new Date('2026-08-22T15:00:00Z');
+    const sunday = new Date('2026-08-23T23:59:00Z');
+
+    const blocked = evaluateEnforcement(weekendPolicy, emptyUsage, 'Minecraft.exe', friday);
+    expect(blocked.shouldKillApp).toBe(true);
+    expect(blocked.shouldLogoffUser).toBe(false);
+    expect(blocked.reason).toBe('CATEGORY_WEEKEND_ONLY');
+    expect(blocked.warningMessage).toContain('weekends');
+
+    expect(evaluateEnforcement(weekendPolicy, emptyUsage, 'Minecraft.exe', saturday).shouldKillApp).toBe(false);
+    expect(evaluateEnforcement(weekendPolicy, emptyUsage, 'Minecraft.exe', sunday).shouldKillApp).toBe(false);
+
+    // The category's daily limit still applies on weekends.
+    const gamesExhausted: DailyUsageSummary = { ...emptyUsage, categorySeconds: { ...emptyUsage.categorySeconds, Games: 3600 } };
+    expect(evaluateEnforcement(weekendPolicy, gamesExhausted, 'Minecraft.exe', saturday).reason).toBe('CATEGORY_LIMIT_EXHAUSTED');
+
+    // Other categories and the bare desktop are unaffected on weekdays.
+    expect(evaluateEnforcement(weekendPolicy, emptyUsage, 'Code.exe', friday).shouldKillApp).toBe(false);
+    expect(evaluateEnforcement(weekendPolicy, emptyUsage, 'explorer.exe', friday).shouldKillApp).toBe(false);
+  });
 });

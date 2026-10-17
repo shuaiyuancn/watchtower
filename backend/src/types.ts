@@ -19,6 +19,7 @@ export interface AppRule {
 export interface CategoryLimit {
   category: AppCategory;
   dailyLimitSeconds: number; // e.g. 7200 for 2 hours
+  weekendOnly?: boolean; // blocked Mon-Fri (device-local); dailyLimitSeconds still applies on weekends
 }
 
 export interface BedtimeSchedule {
