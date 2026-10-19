@@ -99,18 +99,18 @@ describe('Watchtower Rules Engine', () => {
     expect(decision.reason).toBe('CATEGORY_LIMIT_EXHAUSTED');
   });
 
-  it('forces user logoff when global machine limit is reached', () => {
+  it('locks the PC without killing apps when global limit is reached', () => {
     const globalExhaustedUsage: DailyUsageSummary = {
       ...emptyUsage,
       totalActiveSeconds: 7200 // hit 2 hr global limit
     };
     const decision = evaluateEnforcement(mockPolicy, globalExhaustedUsage, 'chrome.exe');
-    expect(decision.shouldKillApp).toBe(true);
+    expect(decision.shouldKillApp).toBe(false); // lock only; apps keep running
     expect(decision.shouldLogoffUser).toBe(true);
     expect(decision.reason).toBe('GLOBAL_LIMIT_EXHAUSTED');
   });
 
-  it('enforces bedtime schedule lock', () => {
+  it('enforces bedtime schedule lock without killing apps', () => {
     const bedtimePolicy: DevicePolicy = {
       ...mockPolicy,
       bedtime: {
@@ -130,9 +130,16 @@ describe('Watchtower Rules Engine', () => {
     expect(isBedtimeActive(bedtimePolicy, dayTime)).toBe(false);
 
     const decision = evaluateEnforcement(bedtimePolicy, emptyUsage, 'chrome.exe', nightTime);
-    expect(decision.shouldKillApp).toBe(true);
+    expect(decision.shouldKillApp).toBe(false); // lock only; apps keep running
     expect(decision.shouldLogoffUser).toBe(true);
     expect(decision.reason).toBe('BEDTIME_CURFEW');
+  });
+
+  it('emergency lock locks the PC without killing apps', () => {
+    const decision = evaluateEnforcement({ ...mockPolicy, emergencyLock: true }, emptyUsage, 'chrome.exe');
+    expect(decision.shouldKillApp).toBe(false); // lock only; apps keep running
+    expect(decision.shouldLogoffUser).toBe(true);
+    expect(decision.reason).toBe('EMERGENCY_LOCK');
   });
 
   it('uses a per-weekday base limit when configured', () => {
@@ -167,7 +174,7 @@ describe('Watchtower Rules Engine', () => {
     const nightTime = new Date('2026-08-23T22:30:00Z');
 
     for (const surface of ['explorer.exe', 'lockapp.exe', '', '   ']) {
-      // Curfew: logs off regardless of foreground, but does not kill the shell.
+      // Curfew: locks regardless of foreground, without killing anything.
       const curfew = evaluateEnforcement(bedtimePolicy, emptyUsage, surface, nightTime);
       expect(curfew.shouldLogoffUser).toBe(true);
       expect(curfew.reason).toBe('BEDTIME_CURFEW');

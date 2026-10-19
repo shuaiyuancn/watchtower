@@ -121,10 +121,11 @@ export function evaluateEnforcement(
   // even when the child is just sitting at the desktop.
   const isSystemSurface = !normApp || normApp === 'explorer.exe' || normApp === 'lockapp.exe';
 
-  // 1. Emergency Lock Check (applies regardless of foreground app)
+  // 1. Emergency Lock Check (applies regardless of foreground app). Lock only:
+  // open apps are left running so no work is lost.
   if (policy.emergencyLock) {
     return {
-      shouldKillApp: !isSystemSurface,
+      shouldKillApp: false,
       shouldLogoffUser: true,
       shouldWarn: true,
       warningMessage: 'Screen time is currently locked by your parent.',
@@ -132,10 +133,11 @@ export function evaluateEnforcement(
     };
   }
 
-  // 2. Bedtime Curfew Check (applies regardless of foreground app)
+  // 2. Bedtime Curfew Check (applies regardless of foreground app). Lock only:
+  // open apps are left running so no work is lost.
   if (isBedtimeActive(policy, now)) {
     return {
-      shouldKillApp: !isSystemSurface,
+      shouldKillApp: false,
       shouldLogoffUser: true,
       shouldWarn: true,
       warningMessage: 'Bedtime curfew is active. PC is locked.',
@@ -152,10 +154,10 @@ export function evaluateEnforcement(
   const remainingGlobalSeconds = Math.max(0, effectiveGlobalLimit - usage.totalActiveSeconds);
 
   // Enforce whenever a base limit is configured (even if a negative bonus has
-  // pushed the effective allowance to zero).
+  // pushed the effective allowance to zero). Lock only, like curfew.
   if (baseDailyLimit > 0 && remainingGlobalSeconds <= 0) {
     return {
-      shouldKillApp: !isSystemSurface,
+      shouldKillApp: false,
       shouldLogoffUser: true,
       shouldWarn: true,
       warningMessage: 'Daily screen time limit reached! Locking PC...',
