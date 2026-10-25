@@ -194,7 +194,12 @@ export class WebSocketHub {
         autoUpdate: typeof m.autoUpdate === 'boolean' ? m.autoUpdate : undefined
       };
 
-      const { decision, policy, usage } = this.store.recordHeartbeat(payload);
+      const { decision, policy, usage, policyChanged } = this.store.recordHeartbeat(payload);
+
+      // e.g. the daily bonus rolled over at device-local midnight
+      if (policyChanged) {
+        this.broadcastToDashboards({ type: 'POLICY_UPDATED', policy });
+      }
 
       // Log enforcement events on their rising edge only.
       this.logEnforcementTransitions(deviceId, decision, payload.currentApp);
