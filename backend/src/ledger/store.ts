@@ -358,8 +358,25 @@ export class WatchtowerStore {
         appRules: [...DEFAULT_APP_RULES]
       };
       this.updatePolicy(policy);
+    } else {
+      // Only roll over once the device has reported its offset; guessing UTC
+      // could wipe a bonus granted for the device's (different) local day.
+      const offsetMin = this.activeSessions.get(deviceId)?.utcOffsetMinutes;
+      if (typeof offsetMin === 'number') {
+        this.rolloverBonus(policy, this.localTodayForDevice(deviceId));
+      }
     }
     return policy;
+  }
+
+  // Zero the bonus when it belongs to an earlier device-local day. Returns
+  // true if the policy changed (and was persisted).
+  private rolloverBonus(policy: DevicePolicy, today: string): boolean {
+    if (policy.bonusDate === today) return false;
+    policy.bonusSecondsToday = 0;
+    policy.bonusDate = today;
+    this.updatePolicy(policy);
+    return true;
   }
 
   public updatePolicy(policy: DevicePolicy): DevicePolicy {
@@ -412,6 +429,7 @@ export class WatchtowerStore {
     decision: EnforcementDecision;
     policy: DevicePolicy;
     usage: DailyUsageSummary;
+    policyChanged: boolean;
   } {
     // Evaluate everything in the device's local time (bedtime, daily reset,
     // hour buckets) using the offset the client reports, so it is independent
@@ -419,7 +437,12 @@ export class WatchtowerStore {
     const offsetMin = typeof payload.utcOffsetMinutes === 'number' ? payload.utcOffsetMinutes : 0;
     const localNow = new Date(Date.now() + offsetMin * 60000);
     const today = localNow.toISOString().split('T')[0];
+    // Yesterday's bonus never carries into a new device-local day. getPolicy may
+    // already roll it over, so detect the change by its date.
+    const prevBonusDate = this.policies.get(payload.deviceId)?.bonusDate;
     const policy = this.getPolicy(payload.deviceId);
+    this.rolloverBonus(policy, today);
+    const policyChanged = policy.bonusDate !== prevBonusDate;
     const usage = this.getDailyUsage(payload.deviceId, today);
 
     const normApp = (payload.currentApp || '').trim().toLowerCase();
@@ -506,7 +529,7 @@ export class WatchtowerStore {
     const decision = evaluateEnforcement(policy, usage, payload.currentApp, localNow);
     this.persistDailyUsage(usage);
 
-    return { decision, policy, usage };
+    return { decision, policy, usage, policyChanged };
   }
 
   public getTimeline(deviceId: string, date: string = this.getTodayDateString(), limit: number = 1000, hour?: number): AppActivityLog[] {
@@ -735,6 +758,7 @@ export class WatchtowerStore {
   // base daily limit and resets with the day.
   public adjustTime(deviceId: string, deltaSeconds: number): DevicePolicy {
     const policy = this.getPolicy(deviceId);
+    this.rolloverBonus(policy, this.localTodayForDevice(deviceId));
     policy.bonusSecondsToday = (policy.bonusSecondsToday || 0) + deltaSeconds;
     this.updatePolicy(policy);
     return policy;

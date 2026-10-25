@@ -413,5 +413,71 @@ describe('Watchtower SQLite Store', () => {
       vi.useRealTimers();
     }
   });
+  it('resets the bonus at device-local midnight, not server midnight', () => {
+    vi.useFakeTimers();
+    try {
+      const base = {
+        deviceId: 'bonus-pc',
+        hostname: 'bonus-pc',
+        currentApp: 'chrome.exe',
+        windowTitle: '',
+        isIdle: false,
+        idleSeconds: 0,
+        elapsedActiveDeltaSeconds: 3,
+        utcOffsetMinutes: 480 // UTC+8
+      };
+
+      // 10:00 local (02:00 UTC) on Aug 23: grant +3h.
+      vi.setSystemTime(new Date('2026-08-23T02:00:00Z'));
+      store.recordHeartbeat(base);
+      store.adjustTime('bonus-pc', 3 * 3600);
+      expect(store.getPolicy('bonus-pc').bonusSecondsToday).toBe(10800);
+
+      // 23:59 local, same device day: bonus kept.
+      vi.setSystemTime(new Date('2026-08-23T15:59:00Z'));
+      const late = store.recordHeartbeat(base);
+      expect(late.policyChanged).toBe(false);
+      expect(late.policy.bonusSecondsToday).toBe(10800);
+
+      // 00:01 local Aug 24 (still Aug 23 in UTC): bonus resets.
+      vi.setSystemTime(new Date('2026-08-23T16:01:00Z'));
+      const nextDay = store.recordHeartbeat(base);
+      expect(nextDay.policyChanged).toBe(true);
+      expect(nextDay.policy.bonusSecondsToday).toBe(0);
+
+      // A grant on the new day starts from zero, and persists across restarts.
+      store.adjustTime('bonus-pc', 1800);
+      expect(store.getPolicy('bonus-pc').bonusSecondsToday).toBe(1800);
+      store.close();
+      store = new WatchtowerStore(tempDir);
+      expect(store.getPolicy('bonus-pc').bonusSecondsToday).toBe(1800);
+
+      // Dashboard reads roll over a stale bonus once the device's offset is known.
+      store.recordHeartbeat(base);
+      vi.setSystemTime(new Date('2026-08-24T16:01:00Z'));
+      expect(store.getPolicy('bonus-pc').bonusSecondsToday).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears a legacy bonus that has no date on the next heartbeat', () => {
+    const policy = store.getPolicy('legacy-bonus');
+    policy.bonusSecondsToday = 10800;
+    delete policy.bonusDate;
+    store.updatePolicy(policy);
+
+    const result = store.recordHeartbeat({
+      deviceId: 'legacy-bonus',
+      hostname: 'legacy-bonus',
+      currentApp: 'chrome.exe',
+      windowTitle: '',
+      isIdle: false,
+      idleSeconds: 0,
+      elapsedActiveDeltaSeconds: 3,
+      utcOffsetMinutes: 0
+    });
+    expect(result.policy.bonusSecondsToday).toBe(0);
+  });
 });
 

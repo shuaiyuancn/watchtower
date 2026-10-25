@@ -37,6 +37,7 @@ export interface DevicePolicy {
   warningThresholdSeconds: number; // 300 for 5 minutes
   emergencyLock: boolean; // Parent toggles instant lock
   bonusSecondsToday: number; // Today-only adjustment (may be negative); resets daily, never changes the base limit
+  bonusDate?: string; // device-local YYYY-MM-DD that bonusSecondsToday belongs to; any other day reads as 0
   bedtime: BedtimeSchedule;
   categoryLimits: CategoryLimit[];
   appRules: AppRule[];
