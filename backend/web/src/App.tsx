@@ -2095,8 +2095,21 @@ export default function App() {
                           const fmt = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                           const inputClass = `bg-white border rounded-lg px-2 py-1.5 text-sm text-slate-900 w-full min-w-0 ${override ? 'border-blue-400' : 'border-slate-300'}`;
                           return (
-                            <div key={day} className="grid grid-cols-[2.5rem_1fr_1fr_3.5rem] items-center gap-2">
-                              <span className={`text-xs font-medium ${override ? 'text-blue-700' : 'text-slate-600'}`}>{day}</span>
+                            <div key={day} className="grid grid-cols-[3rem_1fr_1fr] items-center gap-2">
+                              <div className="flex flex-col leading-tight">
+                                <span className={`text-xs font-medium ${override ? 'text-blue-700' : 'text-slate-600'}`}>{day}</span>
+                                {override ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => saveBedtimeDay(i, null)}
+                                    className="text-[11px] text-blue-700 hover:underline text-left"
+                                  >
+                                    Reset
+                                  </button>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400">default</span>
+                                )}
+                              </div>
                               <input
                                 type="time"
                                 aria-label={`${day} curfew start`}
@@ -2119,17 +2132,6 @@ export default function App() {
                                 }}
                                 className={inputClass}
                               />
-                              {override ? (
-                                <button
-                                  type="button"
-                                  onClick={() => saveBedtimeDay(i, null)}
-                                  className="text-xs text-blue-700 hover:underline text-left"
-                                >
-                                  Reset
-                                </button>
-                              ) : (
-                                <span className="text-xs text-slate-400">default</span>
-                              )}
                             </div>
                           );
                         })}
