@@ -8,7 +8,9 @@ use crate::config::ClientConfig;
 use crate::enforcer::{execute_lock_workstation, kill_target_process};
 use crate::notifier::show_warning_toast;
 use crate::telemetry::{inspect_im_activity, inspect_youtube_activity};
-use crate::tracker::{get_foreground_info, get_idle_time_seconds, ForegroundInfo};
+use crate::tracker::{
+    counts_as_idle, get_foreground_info, get_idle_time_seconds, is_session_locked, ForegroundInfo,
+};
 use crate::types::{ClientHeartbeat, ServerMessage};
 
 /// Returns true if the host portion of a ws(s) URL is a loopback address.
@@ -92,7 +94,8 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 pid: 0,
                             });
                             let idle_secs = get_idle_time_seconds();
-                            let is_idle = idle_secs > 120; // considered idle after 2 minutes of no input
+                            // Idle after 2 minutes of no input, or immediately while the desktop is locked.
+                            let is_idle = counts_as_idle(idle_secs, is_session_locked());
 
                             // 3. Compute active delta capped to maximum 2x interval to prevent sleep spikes
                             let raw_delta = if !is_idle {

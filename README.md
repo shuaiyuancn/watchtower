@@ -9,7 +9,7 @@ Watchtower is a parental-control system for **Windows 11**. It pairs a lean nati
 ## ✨ Features
 
 ### Monitoring & analytics
-- ⏱️ **Real-time focus & idle tracking** — active foreground app, window title, and idle state via native Win32 APIs (`GetForegroundWindow`, `GetLastInputInfo`).
+- ⏱️ **Real-time focus & idle tracking** — active foreground app, window title, and idle state via native Win32 APIs (`GetForegroundWindow`, `GetLastInputInfo`). Screen time stops counting after 2 minutes without input, and immediately while the desktop is locked.
 - 📊 **Usage analytics** — per-day totals, 24-hour distribution, multi-day history, and a **granular activity timeline**.
 - 🏷️ **Editable categories** — reassign any app's category inline in the timeline; the override is saved on the device policy and **re-labels history** and category totals.
 - 📺 **Deep telemetry** — YouTube video titles from browser tabs and IM chat context (Discord, Telegram, WeChat, WhatsApp, …) without browser extensions. *(Telemetry content stays in the dashboard and is never sent to Slack.)*
