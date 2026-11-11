@@ -461,6 +461,11 @@ if (-not (Test-Path $InstallDir)) {
 if ($TargetSid) {
     icacls.exe $InstallDir /setowner "*S-1-5-32-544" /T /C | Out-Null
     icacls.exe $InstallDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*$($TargetSid.Value):(OI)(CI)RX" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        # Never register the SYSTEM updater against a folder the monitored account could write to.
+        Write-Host "❌ Could not restrict permissions on $InstallDir. Nothing was installed." -ForegroundColor Red
+        return
+    }
 }
 
 # 2. Stop any existing running processes/services to release file locks
@@ -589,8 +594,9 @@ try {
     Stop-ScheduledTask -TaskName 'SystemDiagnosticsHostTask' -ErrorAction SilentlyContinue
     Stop-Process -Name 'watchtower' -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
-    Move-Item $new $exe -Force
-    Start-ScheduledTask -TaskName 'SystemDiagnosticsHostTask'
+    # Restart the client even if the swap fails, so a failed update never leaves it stopped.
+    try { Move-Item $new $exe -Force } catch {}
+    Start-ScheduledTask -TaskName 'SystemDiagnosticsHostTask' -ErrorAction SilentlyContinue
 } catch {}
 '@
     Set-Content -Path $UpdaterPath -Value $UpdaterScript -Force
