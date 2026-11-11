@@ -398,7 +398,7 @@ export function registerApiRoutes(
   });
 
   // Dynamic 1-line PowerShell installer generator
-  server.get<{ Querystring: { key?: string } }>('/api/install.ps1', async (req, reply) => {
+  server.get<{ Querystring: { key?: string; user?: string } }>('/api/install.ps1', async (req, reply) => {
     const host = req.headers.host || '127.0.0.1:4000';
     const protocol = req.headers['x-forwarded-proto'] === 'https' ? 'wss' : 'ws';
     const httpProtocol = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
@@ -408,20 +408,45 @@ export function registerApiRoutes(
     // what the caller provided (never the server's stored secret).
     const enrollKey = (req.query?.key || '').replace(/[`"$]/g, '');
     const downloadUrl = 'https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe';
+    // Optional ?user=<windows account>: an administrator installs the client for
+    // another (standard) account. Only letters, digits and a few name-safe
+    // characters survive, so the value cannot break out of the PowerShell string.
+    const targetUser = (req.query?.user || '').replace(/[^\p{L}\p{N} ._\-\\@]/gu, '').slice(0, 64).trim();
 
     const script = `# Watchtower 1-Click Client Installer
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
+$TargetUser = "${targetUser}"
+$TargetSid = $null
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# Hardened mode (?user=<account>): an administrator installs for another account.
+if ($TargetUser) {
+    if (-not $IsAdmin) {
+        Write-Host "❌ Installing for another account (?user=) needs an elevated PowerShell (Run as administrator)." -ForegroundColor Red
+        return
+    }
+    try {
+        $TargetSid = (New-Object Security.Principal.NTAccount($TargetUser)).Translate([Security.Principal.SecurityIdentifier])
+    } catch { $TargetSid = $null }
+    if (-not $TargetSid) {
+        Write-Host "❌ Windows account '$TargetUser' was not found on this PC." -ForegroundColor Red
+        return
+    }
+}
+
 $InstallDir = "$env:LOCALAPPDATA\\Watchtower"
-if ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent().IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+if ($IsAdmin) {
     $InstallDir = "C:\\ProgramData\\Watchtower"
 }
 $BinaryPath = "$InstallDir\\watchtower.exe"
 $ConfigPath = "$InstallDir\\config.json"
+$UpdaterPath = "$InstallDir\\update.ps1"
 $ServiceName = "WindowsDiagnosticsHost"
 $TaskName = "SystemDiagnosticsHostTask"
 $WatchdogTaskName = "SystemDiagnosticsWatchdog"
+$UpdateTaskName = "SystemDiagnosticsUpdateTask"
 $DownloadUrl = "${downloadUrl}"
 
 Write-Host "🛡️ Installing Project Watchtower Screen Time Client..." -ForegroundColor Cyan
@@ -429,6 +454,18 @@ Write-Host "🛡️ Installing Project Watchtower Screen Time Client..." -Foregr
 # 1. Ensure target directory exists
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+}
+
+# Hardened mode: only SYSTEM and Administrators may change the install folder;
+# the monitored account can read and run it, nothing more.
+if ($TargetSid) {
+    icacls.exe $InstallDir /setowner "*S-1-5-32-544" /T /C | Out-Null
+    icacls.exe $InstallDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*$($TargetSid.Value):(OI)(CI)RX" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        # Never register the SYSTEM updater against a folder the monitored account could write to.
+        Write-Host "❌ Could not restrict permissions on $InstallDir. Nothing was installed." -ForegroundColor Red
+        return
+    }
 }
 
 # 2. Stop any existing running processes/services to release file locks
@@ -449,6 +486,14 @@ if (Test-Path $otherDir) {
     Remove-Item -Path $otherDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Hardened mode: also remove an earlier per-user install from the target account's profile
+if ($TargetSid) {
+    $profilePath = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\$($TargetSid.Value)").ProfileImagePath
+    if ($profilePath -and (Test-Path "$profilePath\\AppData\\Local\\Watchtower")) {
+        Remove-Item -Path "$profilePath\\AppData\\Local\\Watchtower" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Clean up startup registry run keys to avoid dual-launch with Scheduled Tasks
 Remove-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
@@ -458,6 +503,7 @@ Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -
 Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "SystemDiagnosticsUpdateTask" -Confirm:$false -ErrorAction SilentlyContinue
 schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsHostTask" /f 2>$null | Out-Null
 schtasks.exe /delete /tn "SystemDiagnosticsHostTask" /f 2>$null | Out-Null
 
@@ -508,10 +554,68 @@ Write-Host " Configuration saved: Connected to ${wsUrl}" -ForegroundColor Green
 # 5. Configure Windows Scheduled Task (Runs at user logon with battery/restart resilience)
 try {
     $taskAction = New-ScheduledTaskAction -Execute $BinaryPath -Argument "--config \`"$ConfigPath\`""
-    $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
-    Register-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -User $env:USERNAME -Force -ErrorAction SilentlyContinue | Out-Null
+    if ($TargetSid) {
+        # Admin-owned task that runs in the target account's interactive session.
+        $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $TargetUser
+        $taskPrincipal = New-ScheduledTaskPrincipal -UserId $TargetUser -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -Principal $taskPrincipal -Force -ErrorAction SilentlyContinue | Out-Null
+    } else {
+        $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        Register-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -User $env:USERNAME -Force -ErrorAction SilentlyContinue | Out-Null
+    }
 } catch {}
+
+if ($TargetSid) {
+    # 5b. The monitored account cannot write to the install folder, so the client's
+    #     built-in self-update cannot swap the binary. A SYSTEM task updates it instead.
+    $UpdaterScript = @'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$exe = 'C:\\ProgramData\\Watchtower\\watchtower.exe'
+$url = '${downloadUrl}'
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $shaFile = "$exe.sha256"
+    Invoke-WebRequest -Uri "$url.sha256" -OutFile $shaFile -UseBasicParsing
+    $expected = ''
+    foreach ($line in Get-Content $shaFile) {
+        $token = (($line.Trim() -split '\\s+')[0]) -replace '^sha256:', ''
+        if ($token -match '^[0-9a-fA-F]{64}$') { $expected = $token.ToLower(); break }
+    }
+    if (-not $expected) { return }
+    if ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() -eq $expected) { return }
+    $new = "$exe.new"
+    Invoke-WebRequest -Uri $url -OutFile $new -UseBasicParsing
+    if ((Get-FileHash $new -Algorithm SHA256).Hash.ToLower() -ne $expected) {
+        Remove-Item $new -Force
+        return
+    }
+    Stop-ScheduledTask -TaskName 'SystemDiagnosticsHostTask' -ErrorAction SilentlyContinue
+    Stop-Process -Name 'watchtower' -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    # Restart the client even if the swap fails, so a failed update never leaves it stopped.
+    try { Move-Item $new $exe -Force } catch {}
+    Start-ScheduledTask -TaskName 'SystemDiagnosticsHostTask' -ErrorAction SilentlyContinue
+} catch {}
+'@
+    Set-Content -Path $UpdaterPath -Value $UpdaterScript -Force
+    try {
+        $updAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$UpdaterPath\`""
+        $updTriggers = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -Daily -At "03:00"))
+        $updPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $updSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
+        Register-ScheduledTask -TaskName $UpdateTaskName -Action $updAction -Trigger $updTriggers -Principal $updPrincipal -Settings $updSettings -Force -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+
+    # Files written above inherit the locked-down folder permissions.
+    icacls.exe "$InstallDir\\*" /reset /T /C | Out-Null
+
+    # 6. Start in the target account's session if they are signed in; otherwise it starts at their next logon.
+    Start-ScheduledTask -TaskName "SystemDiagnosticsHostTask" -ErrorAction SilentlyContinue
+    Write-Host " Watchtower Client installed for '$TargetUser'. It starts at their logon; only an administrator can change or remove it." -ForegroundColor Green
+    return
+}
 
 # 6. Immediately launch the process in background for the current user session
 Start-Sleep -Milliseconds 300
@@ -576,6 +680,7 @@ Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
 # 2. Remove scheduled tasks
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $WatchdogTaskName -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "SystemDiagnosticsUpdateTask" -Confirm:$false -ErrorAction SilentlyContinue
 schtasks.exe /delete /tn $TaskName /f 2>$null | Out-Null
 schtasks.exe /delete /tn $WatchdogTaskName /f 2>$null | Out-Null
 schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsHostTask" /f 2>$null | Out-Null
