@@ -472,6 +472,35 @@ describe('Watchtower Authentication & Password Protection', () => {
     expect(goodUninstallBody.success).toBe(true);
     expect(goodUninstallBody.script).toContain('Stop-Process -Name "watchtower"');
     expect(goodUninstallBody.script).toContain('Unregister-ScheduledTask');
+    expect(goodUninstallBody.script).toContain('SystemDiagnosticsUpdateTask');
+
+    await app.close();
+  }, 15000);
+
+  it('installer: ?user= selects the hardened admin-run mode and is sanitized', async () => {
+    const { createServer } = await import('../server.js');
+    process.env.DATA_DIR = tempDir;
+    const { app } = await createServer();
+
+    // Default: no target account, classic per-user install.
+    const plain = await app.inject({ method: 'GET', url: '/api/install.ps1' });
+    expect(plain.statusCode).toBe(200);
+    expect(plain.body).toContain('$TargetUser = ""');
+
+    // Hardened: target account is embedded, with the lock-down and SYSTEM updater.
+    const hardened = await app.inject({ method: 'GET', url: '/api/install.ps1?user=Leo%20Y' });
+    expect(hardened.body).toContain('$TargetUser = "Leo Y"');
+    expect(hardened.body).toContain('New-ScheduledTaskPrincipal -UserId $TargetUser -LogonType Interactive');
+    expect(hardened.body).toContain('/inheritance:r');
+    expect(hardened.body).toContain('SystemDiagnosticsUpdateTask');
+
+    // Injection attempt: quotes, $, backticks, ; and parentheses are stripped.
+    const evil = await app.inject({
+      method: 'GET',
+      url: '/api/install.ps1?user=' + encodeURIComponent('x"; Remove-Item C:\\ -Recurse; $(calc) `n #')
+    });
+    const line = evil.body.split('\n').find((l) => l.startsWith('$TargetUser = '))!;
+    expect(line).toBe('$TargetUser = "x Remove-Item C\\ -Recurse calc n"');
 
     await app.close();
   }, 15000);

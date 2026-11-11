@@ -166,6 +166,21 @@ What it does:
 
 After a device runs this build once, it **self-updates** from future releases — no reinstall needed.
 
+### Install for a child's Standard account (hardened, run by an admin)
+
+The plain one-liner installs for whoever runs it, and that account can remove it. To install for a child's Standard account so they can't, open PowerShell **as administrator** (from any session) and pass the child's Windows account name:
+
+```powershell
+irm "https://watchtower-production-3b1e.up.railway.app/api/install.ps1?user=<child-account>" | iex
+```
+
+Add `&key=<DEVICE_ENROLLMENT_SECRET>` if device authentication is on. In this mode the installer:
+1. Installs to `C:\ProgramData\Watchtower` and restricts the folder: SYSTEM and Administrators have full control, the child account can only read and run it.
+2. Registers the logon task as an admin-owned task that runs in the child's session, and removes any earlier per-user install from the child's profile.
+3. Registers a SYSTEM task (`SystemDiagnosticsUpdateTask`, at startup and daily) that applies SHA-256-verified updates, because the client can't overwrite its own binary in the locked folder.
+
+The child can still end the running process from Task Manager; the task restarts it within a minute and the disconnect shows up in Slack. Run the uninstaller from an elevated PowerShell to remove a hardened install.
+
 ### Uninstall (password-protected)
 
 ```powershell
