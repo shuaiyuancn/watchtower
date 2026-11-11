@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluateEnforcement,
   isBedtimeActive,
+  normalizeBedtimeByWeekday,
   resolveAppCategory,
   getBaseDailyLimitSeconds
 } from '../ledger/rules.js';
@@ -133,6 +134,59 @@ describe('Watchtower Rules Engine', () => {
     expect(decision.shouldKillApp).toBe(false); // lock only; apps keep running
     expect(decision.shouldLogoffUser).toBe(true);
     expect(decision.reason).toBe('BEDTIME_CURFEW');
+  });
+
+  it('applies a different curfew per weekday, keyed by the day the curfew starts', () => {
+    const late = { startHour: 23, startMinute: 0, endHour: 9, endMinute: 0 };
+    const policy: DevicePolicy = {
+      ...mockPolicy,
+      bedtime: {
+        enabled: true,
+        startHour: 21, startMinute: 0, endHour: 7, endMinute: 0, // default
+        byWeekday: [null, null, null, null, null, late, late] // Fri + Sat nights
+      }
+    };
+    const at = (iso: string) => isBedtimeActive(policy, new Date(iso));
+
+    // 2026-08-21 is a Friday.
+    expect(at('2026-08-21T06:00:00Z')).toBe(true);   // Fri morning: tail of Thursday's default curfew
+    expect(at('2026-08-21T21:30:00Z')).toBe(false);  // Fri 21:30: Friday's curfew starts at 23:00
+    expect(at('2026-08-21T23:30:00Z')).toBe(true);   // Fri 23:30
+    expect(at('2026-08-22T08:00:00Z')).toBe(true);   // Sat 08:00: Friday's curfew runs to 09:00
+    expect(at('2026-08-22T09:30:00Z')).toBe(false);  // Sat 09:30
+    expect(at('2026-08-23T08:00:00Z')).toBe(true);   // Sun 08:00: tail of Saturday's curfew
+    expect(at('2026-08-23T21:30:00Z')).toBe(true);   // Sun 21:30: back to the default
+    expect(at('2026-08-24T08:00:00Z')).toBe(false);  // Mon 08:00: Sunday's default ended at 07:00
+
+    expect(evaluateEnforcement(policy, emptyUsage, 'chrome.exe', new Date('2026-08-21T23:30:00Z')).reason)
+      .toBe('BEDTIME_CURFEW');
+  });
+
+  it('handles same-day and malformed per-weekday curfews', () => {
+    const base = { enabled: true, startHour: 21, startMinute: 0, endHour: 7, endMinute: 0 };
+
+    // Wednesday has a daytime-only curfew, so Wednesday evening is free.
+    const sameDay: DevicePolicy = {
+      ...mockPolicy,
+      bedtime: { ...base, byWeekday: [null, null, null, { startHour: 13, startMinute: 0, endHour: 15, endMinute: 0 }, null, null, null] }
+    };
+    expect(isBedtimeActive(sameDay, new Date('2026-08-19T06:00:00Z'))).toBe(true);   // Wed 06:00: Tuesday's tail
+    expect(isBedtimeActive(sameDay, new Date('2026-08-19T14:00:00Z'))).toBe(true);   // Wed 14:00
+    expect(isBedtimeActive(sameDay, new Date('2026-08-19T22:00:00Z'))).toBe(false);  // Wed 22:00
+    expect(isBedtimeActive(sameDay, new Date('2026-08-20T06:00:00Z'))).toBe(false);  // Thu 06:00: no overnight tail
+
+    // A malformed entry falls back to the default window instead of disabling the curfew.
+    const malformed = {
+      ...mockPolicy,
+      bedtime: { ...base, byWeekday: [null, null, null, null, null, { startHour: 99, startMinute: 0, endHour: 7, endMinute: 0 }, null] }
+    } as DevicePolicy;
+    expect(isBedtimeActive(malformed, new Date('2026-08-21T21:30:00Z'))).toBe(true);
+
+    expect(normalizeBedtimeByWeekday('nope')).toBeNull();
+    expect(normalizeBedtimeByWeekday([null, null])).toBeNull();
+    expect(normalizeBedtimeByWeekday([
+      null, { startHour: 22, startMinute: 30, endHour: 6, endMinute: 0, extra: 'x' }, { startHour: -1 }, 'x', null, null, null
+    ])).toEqual([null, { startHour: 22, startMinute: 30, endHour: 6, endMinute: 0 }, null, null, null, null, null]);
   });
 
   it('emergency lock locks the PC without killing apps', () => {

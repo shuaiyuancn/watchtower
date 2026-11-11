@@ -22,12 +22,19 @@ export interface CategoryLimit {
   weekendOnly?: boolean; // blocked Mon-Fri (device-local); dailyLimitSeconds still applies on weekends
 }
 
-export interface BedtimeSchedule {
-  enabled: boolean;
+export interface BedtimeWindow {
   startHour: number; // 0-23, e.g. 21 (9 PM)
   startMinute: number; // 0-59
   endHour: number; // 0-23, e.g. 7 (7 AM)
   endMinute: number;
+}
+
+export interface BedtimeSchedule extends BedtimeWindow {
+  enabled: boolean;
+  // Optional per-weekday curfew (7 entries, 0=Sunday, device-local); null = use
+  // the default window above. Each entry is the curfew that STARTS on that day,
+  // so Friday's 22:00-08:00 covers Friday evening and Saturday morning.
+  byWeekday?: (BedtimeWindow | null)[] | null;
 }
 
 export interface DevicePolicy {
