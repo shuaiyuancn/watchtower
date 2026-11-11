@@ -1,7 +1,8 @@
 import { 
   AppCategory, 
-  AppRule, 
-  DevicePolicy, 
+  AppRule,
+  BedtimeWindow,
+  DevicePolicy,
   DailyUsageSummary, 
   EnforcementDecision 
 } from '../types.js';
@@ -88,24 +89,65 @@ export function isWeekend(now: Date = new Date()): boolean {
   return day === 0 || day === 6;
 }
 
+function isClockValue(v: unknown, max: number): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max;
+}
+
+/** A well-formed curfew window: whole hours 0-23 and minutes 0-59. */
+export function isValidBedtimeWindow(w: unknown): w is BedtimeWindow {
+  if (!w || typeof w !== 'object') return false;
+  const x = w as Record<string, unknown>;
+  return isClockValue(x.startHour, 23) && isClockValue(x.startMinute, 59)
+    && isClockValue(x.endHour, 23) && isClockValue(x.endMinute, 59);
+}
+
+/**
+ * Clean a per-weekday curfew list from untrusted input. Returns 7 entries
+ * (valid window or null) or null when the list itself is unusable.
+ */
+export function normalizeBedtimeByWeekday(input: unknown): (BedtimeWindow | null)[] | null {
+  if (!Array.isArray(input) || input.length !== 7) return null;
+  return input.map((w) => (isValidBedtimeWindow(w)
+    ? { startHour: w.startHour, startMinute: w.startMinute, endHour: w.endHour, endMinute: w.endMinute }
+    : null));
+}
+
+/**
+ * The curfew that starts on the given weekday (0 = Sunday): that day's override
+ * if one is set and valid, otherwise the default window.
+ */
+export function getBedtimeWindow(policy: DevicePolicy, weekday: number): BedtimeWindow {
+  const override = policy.bedtime.byWeekday?.[weekday];
+  return isValidBedtimeWindow(override) ? override : policy.bedtime;
+}
+
 export function isBedtimeActive(policy: DevicePolicy, now: Date = new Date()): boolean {
   if (!policy.bedtime || !policy.bedtime.enabled) {
     return false;
   }
-  
+
   // Read the wall-clock via UTC getters: callers pass a Date already shifted to
   // the device's local time, so this is timezone-independent of the server.
   const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const startMinutes = policy.bedtime.startHour * 60 + policy.bedtime.startMinute;
-  const endMinutes = policy.bedtime.endHour * 60 + policy.bedtime.endMinute;
-  
-  if (startMinutes > endMinutes) {
-    // Overnight curfew (e.g. 21:00 to 07:00)
-    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
-  } else {
+  const weekday = now.getUTCDay();
+
+  // Curfew that starts today.
+  const today = getBedtimeWindow(policy, weekday);
+  const start = today.startHour * 60 + today.startMinute;
+  const end = today.endHour * 60 + today.endMinute;
+  if (start > end) {
+    // Overnight curfew (e.g. 21:00 to 07:00): tonight's part.
+    if (currentMinutes >= start) return true;
+  } else if (currentMinutes >= start && currentMinutes < end) {
     // Same-day curfew
-    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    return true;
   }
+
+  // Morning tail of the overnight curfew that started yesterday.
+  const yesterday = getBedtimeWindow(policy, (weekday + 6) % 7);
+  const yStart = yesterday.startHour * 60 + yesterday.startMinute;
+  const yEnd = yesterday.endHour * 60 + yesterday.endMinute;
+  return yStart > yEnd && currentMinutes < yEnd;
 }
 
 export function evaluateEnforcement(

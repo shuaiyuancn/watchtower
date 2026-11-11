@@ -26,7 +26,7 @@ Watchtower is a parental-control system for **Windows 11**. It pairs a lean nati
 - ⚡ **Near-instant sync** over a persistent WebSocket.
 - ➕➖ **Bonus time** — grant (+15m / +30m / +1h) or **remove** bonus (−15m / Clear Bonus).
 - 🚨 **Instant emergency lock / unlock** and remote **app kill**.
-- 🗓️ **Daily quota + bedtime curfew** configuration.
+- 🗓️ **Daily quota + bedtime curfew** configuration, with an optional different curfew for each day of the week. Each day's entry is the curfew that starts on that day, so Friday 23:00 to 09:00 unlocks on Saturday at 09:00.
 
 ### Security
 - 🔑 **No hardcoded password** — a strong random dashboard password is generated on first boot (or set via `ADMIN_PASSWORD`).

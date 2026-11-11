@@ -3,6 +3,7 @@ import { WatchtowerStore } from '../ledger/store.js';
 import { WebSocketHub } from '../ws/hub.js';
 import { DevicePolicy } from '../types.js';
 import { notifySlack } from '../notify/slack.js';
+import { normalizeBedtimeByWeekday } from '../ledger/rules.js';
 
 // Rate limiting: exponential backoff plus a hard lockout after repeated failures.
 const BASE_COOLDOWN_MS = 5000;      // cooldown after the first failure
@@ -242,12 +243,25 @@ export function registerApiRoutes(
       deviceId: req.params.id
     };
 
+    // Per-weekday curfews come from the client as free-form JSON: keep only
+    // well-formed windows, and drop the list entirely if it is not 7 entries.
+    if (updated.bedtime && updated.bedtime.byWeekday !== undefined) {
+      updated.bedtime = {
+        ...updated.bedtime,
+        byWeekday: normalizeBedtimeByWeekday(updated.bedtime.byWeekday)
+      };
+    }
+
     store.updatePolicy(updated);
     wsHub.broadcastPolicyUpdate(updated);
 
     const limitMin = Math.round((updated.dailyGlobalLimitSeconds || 0) / 60);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const customDays = (updated.bedtime?.byWeekday || [])
+      .map((w, i) => (w ? dayNames[i] : null))
+      .filter(Boolean);
     const bedtime = updated.bedtime?.enabled
-      ? `, bedtime ${String(updated.bedtime.startHour).padStart(2, '0')}:${String(updated.bedtime.startMinute).padStart(2, '0')}–${String(updated.bedtime.endHour).padStart(2, '0')}:${String(updated.bedtime.endMinute).padStart(2, '0')}`
+      ? `, bedtime ${String(updated.bedtime.startHour).padStart(2, '0')}:${String(updated.bedtime.startMinute).padStart(2, '0')}–${String(updated.bedtime.endHour).padStart(2, '0')}:${String(updated.bedtime.endMinute).padStart(2, '0')}${customDays.length ? `, custom on ${customDays.join('/')}` : ''}`
       : '';
     notifySlack(`⚙️ Watchtower quotas updated for *${req.params.id}* (daily limit ${limitMin}m${bedtime}).`);
 
