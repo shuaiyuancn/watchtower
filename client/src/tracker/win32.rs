@@ -9,7 +9,12 @@ pub struct ForegroundInfo {
 pub mod imp {
     use super::ForegroundInfo;
     use std::path::Path;
+    use windows::core::PWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
+    use windows::Win32::System::RemoteDesktop::{
+        WTSFreeMemory, WTSQuerySessionInformationW, WTSSessionInfoEx, WTSINFOEXW,
+        WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+    };
     use windows::Win32::System::SystemInformation::GetTickCount;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
@@ -99,6 +104,41 @@ pub mod imp {
             0
         }
     }
+
+    /// WTSINFOEX_LEVEL1.SessionFlags value for a locked session (WTS_SESSIONSTATE_LOCK).
+    const SESSION_FLAG_LOCKED: i64 = 0;
+
+    /// True while this session's desktop is locked (lock screen showing, or the
+    /// session is switched out). Any failure reads as "not locked", so a broken
+    /// query can never stop screen time from being counted.
+    pub fn is_session_locked() -> bool {
+        unsafe {
+            let mut buf = PWSTR::null();
+            let mut bytes = 0u32;
+            if WTSQuerySessionInformationW(
+                WTS_CURRENT_SERVER_HANDLE,
+                WTS_CURRENT_SESSION,
+                WTSSessionInfoEx,
+                &mut buf,
+                &mut bytes,
+            )
+            .is_err()
+                || buf.is_null()
+            {
+                return false;
+            }
+
+            let mut locked = false;
+            if bytes as usize >= std::mem::size_of::<WTSINFOEXW>() {
+                let info = std::ptr::read_unaligned(buf.0 as *const WTSINFOEXW);
+                if info.Level == 1 {
+                    locked = info.Data.WTSInfoExLevel1.SessionFlags as i64 == SESSION_FLAG_LOCKED;
+                }
+            }
+            WTSFreeMemory(buf.0 as *mut core::ffi::c_void);
+            locked
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -116,6 +156,10 @@ pub mod imp {
     pub fn get_idle_seconds() -> u64 {
         0
     }
+
+    pub fn is_session_locked() -> bool {
+        false
+    }
 }
 
 pub fn get_foreground_info() -> Option<ForegroundInfo> {
@@ -124,4 +168,36 @@ pub fn get_foreground_info() -> Option<ForegroundInfo> {
 
 pub fn get_idle_time_seconds() -> u64 {
     imp::get_idle_seconds()
+}
+
+pub fn is_session_locked() -> bool {
+    imp::is_session_locked()
+}
+
+/// Seconds without keyboard or mouse input after which the user counts as idle.
+pub const IDLE_THRESHOLD_SECS: u64 = 120;
+
+/// Whether this heartbeat should be reported as idle, which stops screen time
+/// from accumulating. A locked desktop is idle immediately; otherwise the user
+/// is idle after IDLE_THRESHOLD_SECS without input.
+pub fn counts_as_idle(idle_secs: u64, session_locked: bool) -> bool {
+    session_locked || idle_secs > IDLE_THRESHOLD_SECS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locked_session_is_idle_even_with_recent_input() {
+        assert!(counts_as_idle(0, true));
+        assert!(counts_as_idle(IDLE_THRESHOLD_SECS, true));
+    }
+
+    #[test]
+    fn unlocked_session_is_idle_only_past_the_threshold() {
+        assert!(!counts_as_idle(0, false));
+        assert!(!counts_as_idle(IDLE_THRESHOLD_SECS, false));
+        assert!(counts_as_idle(IDLE_THRESHOLD_SECS + 1, false));
+    }
 }
