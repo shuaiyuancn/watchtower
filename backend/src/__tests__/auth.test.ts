@@ -494,6 +494,14 @@ describe('Watchtower Authentication & Password Protection', () => {
     expect(hardened.body).toContain('/inheritance:r');
     expect(hardened.body).toContain('SystemDiagnosticsUpdateTask');
 
+    // SYSTEM watchdog: a long-running, SYSTEM-owned loop the Standard user cannot stop,
+    // which relaunches the client (via the admin-owned user task) after it is killed.
+    expect(hardened.body).toContain('Register-ScheduledTask -TaskName $WatchdogTaskName -Action $wdAction');
+    expect(hardened.body).toContain('New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest');
+    expect(hardened.body).toContain("Start-ScheduledTask -TaskName $taskName");
+    // The watchdog must defer to an in-progress self-update instead of racing the swap.
+    expect(hardened.body).toContain('update.lock');
+
     // Injection attempt: quotes, $, backticks, ; and parentheses are stripped.
     const evil = await app.inject({
       method: 'GET',
