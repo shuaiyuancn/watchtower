@@ -19,6 +19,15 @@ pub const UPDATED_ARG: &str = "--updated";
 
 // ---- Pure, unit-testable helpers ----
 
+/// Lowercase hex SHA-256 of the currently running executable, if it can be
+/// read. Reported on each heartbeat so the server can tell whether this device
+/// is running the latest published release.
+pub fn current_binary_sha256() -> Option<String> {
+    let exe = env::current_exe().ok()?;
+    let bytes = fs::read(&exe).ok()?;
+    Some(sha256_hex(&bytes))
+}
+
 /// Lowercase hex SHA-256 of the given bytes.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();

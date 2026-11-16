@@ -625,7 +625,11 @@ try {
     Set-Content -Path $UpdaterPath -Value $UpdaterScript -Force
     try {
         $updAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$UpdaterPath\`""
-        $updTriggers = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -Daily -At "03:00"))
+        # Check for a new release at startup and then every 30 minutes. In hardened
+        # mode the client cannot overwrite its own binary (locked folder), so this
+        # SYSTEM task is what actually applies updates on the child's PC.
+        $updRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Days 3650)
+        $updTriggers = @((New-ScheduledTaskTrigger -AtStartup), $updRepeat)
         $updPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
         $updSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
         Register-ScheduledTask -TaskName $UpdateTaskName -Action $updAction -Trigger $updTriggers -Principal $updPrincipal -Settings $updSettings -Force -ErrorAction SilentlyContinue | Out-Null

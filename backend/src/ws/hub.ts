@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { WatchtowerStore } from '../ledger/store.js';
 import { notifySlack } from '../notify/slack.js';
+import { getLatestBinaryHash, compareToLatest } from '../release/latest.js';
 import {
   ClientHeartbeatPayload,
   ServerCommand,
@@ -22,7 +23,9 @@ const HeartbeatSchema = z.object({
   idleSeconds: z.number().finite().min(0).max(86400).optional(),
   elapsedActiveDeltaSeconds: z.number().finite().min(0).max(86400).optional(),
   utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
-  autoUpdate: z.boolean().optional()
+  autoUpdate: z.boolean().optional(),
+  version: STR(32).optional(),
+  binaryHash: STR(64).optional()
 }).passthrough();
 
 const TelemetrySchema = z.object({
@@ -56,12 +59,11 @@ export class WebSocketHub {
   }
 
   public registerClient(deviceId: string, ws: WebSocket): void {
-    const wasConnected = this.clientSockets.has(deviceId);
     this.clientSockets.set(deviceId, ws);
     console.log(`[WS Hub] Device client connected: ${deviceId}`);
-    if (!wasConnected) {
-      notifySlack(`🟢 Watchtower device connected: *${deviceId}*`);
-    }
+    // The "device connected" Slack notice is deferred to the first heartbeat so
+    // it can include the client's version and whether it is up to date.
+    const conn = { announced: false };
 
     // Send initial policy sync immediately upon connection
     const policy = this.store.getPolicy(deviceId);
@@ -98,7 +100,7 @@ export class WebSocketHub {
 
       try {
         const msg = JSON.parse(text);
-        this.handleClientMessage(deviceId, msg, ws);
+        this.handleClientMessage(deviceId, msg, ws, conn);
       } catch (err) {
         console.error(`[WS Hub] Invalid message from ${deviceId}:`, err);
       }
@@ -174,7 +176,42 @@ export class WebSocketHub {
     });
   }
 
-  private handleClientMessage(deviceId: string, msg: any, ws: WebSocket): void {
+  // Resolve whether the just-connected device runs the latest release, then
+  // record it on the session and announce the connection (version + up-to-date
+  // hint) to Slack and the dashboards. Best-effort; never throws.
+  private async announceClientConnect(
+    deviceId: string,
+    clientVersion: string | undefined,
+    binaryHash: string | undefined
+  ): Promise<void> {
+    let isLatest: boolean | null = null;
+    try {
+      const latest = await getLatestBinaryHash();
+      isLatest = compareToLatest(latest, binaryHash);
+    } catch {
+      isLatest = null;
+    }
+
+    this.store.markDeviceVersionStatus(deviceId, clientVersion, binaryHash, isLatest);
+
+    const versionLabel = clientVersion ? `v${clientVersion}` : 'unknown version';
+    const hint =
+      isLatest === true
+        ? '✅ up to date'
+        : isLatest === false
+          ? '⚠️ outdated — will auto-update within ~30m'
+          : 'ℹ️ version status unknown';
+    notifySlack(`🟢 Watchtower device connected: *${deviceId}* — ${versionLabel} (${hint})`);
+
+    this.broadcastToDashboards({
+      type: 'DEVICE_VERSION',
+      deviceId,
+      clientVersion: clientVersion ?? null,
+      isLatest
+    });
+  }
+
+  private handleClientMessage(deviceId: string, msg: any, ws: WebSocket, conn?: { announced: boolean }): void {
     if (msg?.type === 'HEARTBEAT') {
       const parsed = HeartbeatSchema.safeParse(msg);
       if (!parsed.success) {
@@ -191,10 +228,19 @@ export class WebSocketHub {
         idleSeconds: Number(m.idleSeconds || 0),
         elapsedActiveDeltaSeconds: Number(m.elapsedActiveDeltaSeconds || 0),
         utcOffsetMinutes: typeof m.utcOffsetMinutes === 'number' ? m.utcOffsetMinutes : undefined,
-        autoUpdate: typeof m.autoUpdate === 'boolean' ? m.autoUpdate : undefined
+        autoUpdate: typeof m.autoUpdate === 'boolean' ? m.autoUpdate : undefined,
+        clientVersion: typeof m.version === 'string' ? m.version : undefined,
+        binaryHash: typeof m.binaryHash === 'string' ? m.binaryHash : undefined
       };
 
       const { decision, policy, usage, policyChanged } = this.store.recordHeartbeat(payload);
+
+      // First heartbeat of this connection: announce the device (with version
+      // and whether it is up to date) to Slack and the dashboards, exactly once.
+      if (conn && !conn.announced) {
+        conn.announced = true;
+        void this.announceClientConnect(deviceId, payload.clientVersion, payload.binaryHash);
+      }
 
       // e.g. the daily bonus rolled over at device-local midnight
       if (policyChanged) {

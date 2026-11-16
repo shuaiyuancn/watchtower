@@ -19,7 +19,7 @@ pub struct ClientConfig {
     /// Periodically self-update from the published GitHub release.
     #[serde(default = "default_true")]
     pub auto_update: bool,
-    /// How often to check for a new release binary (seconds). Default 6h.
+    /// How often to check for a new release binary (seconds). Default 30m.
     #[serde(default = "default_update_interval")]
     pub update_check_interval_secs: u64,
     pub heartbeat_interval_secs: u64,
@@ -30,7 +30,7 @@ fn default_true() -> bool {
 }
 
 fn default_update_interval() -> u64 {
-    21_600 // 6 hours
+    1_800 // 30 minutes
 }
 
 impl Default for ClientConfig {
@@ -46,7 +46,7 @@ impl Default for ClientConfig {
             auth_token: None,
             allow_insecure: false,
             auto_update: true,
-            update_check_interval_secs: 21_600,
+            update_check_interval_secs: 1_800,
             heartbeat_interval_secs: 3,
         }
     }
