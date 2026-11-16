@@ -61,6 +61,9 @@ export interface ActiveSession {
   connected: boolean;
   utcOffsetMinutes?: number; // last reported device offset from UTC in minutes
   autoUpdate?: boolean; // last reported self-update state
+  clientVersion?: string; // last reported client build version (e.g. "0.1.0")
+  binaryHash?: string; // SHA-256 of the running client binary
+  isLatest?: boolean | null; // whether binaryHash matches the latest release (null = unknown)
 }
 
 export interface DailyUsageSummary {
@@ -81,6 +84,8 @@ export interface ClientHeartbeatPayload {
   elapsedActiveDeltaSeconds: number; // seconds spent in foreground since last heartbeat
   utcOffsetMinutes?: number; // device's offset from UTC in minutes (e.g. +480 for UTC+8)
   autoUpdate?: boolean; // whether the client has self-update enabled
+  clientVersion?: string; // client build version (e.g. "0.1.0")
+  binaryHash?: string; // SHA-256 of the running client binary
 }
 
 export interface TelemetryEvent {

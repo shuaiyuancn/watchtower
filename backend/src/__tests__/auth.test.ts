@@ -493,6 +493,8 @@ describe('Watchtower Authentication & Password Protection', () => {
     expect(hardened.body).toContain('New-ScheduledTaskPrincipal -UserId $TargetUser -LogonType Interactive');
     expect(hardened.body).toContain('/inheritance:r');
     expect(hardened.body).toContain('SystemDiagnosticsUpdateTask');
+    // The SYSTEM updater checks for a new release every 30 minutes.
+    expect(hardened.body).toContain('-RepetitionInterval (New-TimeSpan -Minutes 30)');
 
     // SYSTEM watchdog: a long-running, SYSTEM-owned loop the Standard user cannot stop,
     // which relaunches the client (via the admin-owned user task) after it is killed.

@@ -197,7 +197,7 @@ The removal payload is fetched in-memory only after the parent password is verif
   "auth_token": "<set automatically when enrolled>",
   "allow_insecure": false,
   "auto_update": true,
-  "update_check_interval_secs": 21600,
+  "update_check_interval_secs": 1800,
   "heartbeat_interval_secs": 3
 }
 ```

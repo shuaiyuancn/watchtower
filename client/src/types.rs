@@ -26,6 +26,14 @@ pub struct ClientHeartbeat {
     /// it is disabled (a tamper signal).
     #[serde(rename = "autoUpdate")]
     pub auto_update: bool,
+    /// This client's build version (Cargo package version), reported so the
+    /// server and Slack can show which version each device is running.
+    #[serde(rename = "version")]
+    pub version: String,
+    /// SHA-256 of this running executable. The server compares it to the latest
+    /// published release checksum to tell whether the device is up to date.
+    #[serde(rename = "binaryHash")]
+    pub binary_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

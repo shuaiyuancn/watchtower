@@ -49,6 +49,11 @@ pub async fn run_sync_loop(config: ClientConfig) {
     let mut last_app = String::new();
     let mut last_active_ts = std::time::Instant::now();
 
+    // Reported to the server on every heartbeat. The build version is baked in
+    // at compile time; the binary hash is computed once from the running exe.
+    let client_version = env!("CARGO_PKG_VERSION").to_string();
+    let binary_hash = crate::updater::current_binary_sha256().unwrap_or_default();
+
     let log_endpoint = ws_endpoint
         .split_once("?token=")
         .map(|(base, _)| format!("{}?token=***", base))
@@ -120,6 +125,8 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 elapsed_active_delta_seconds: elapsed_delta,
                                 utc_offset_minutes,
                                 auto_update: config.auto_update,
+                                version: client_version.clone(),
+                                binary_hash: binary_hash.clone(),
                             };
 
                             if let Ok(json_str) = serde_json::to_string(&heartbeat) {

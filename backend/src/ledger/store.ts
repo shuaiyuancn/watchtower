@@ -523,7 +523,12 @@ export class WatchtowerStore {
       lastHeartbeat: new Date().toISOString(),
       connected: true,
       utcOffsetMinutes: offsetMin,
-      autoUpdate: payload.autoUpdate
+      autoUpdate: payload.autoUpdate,
+      clientVersion: payload.clientVersion ?? prevSession?.clientVersion,
+      binaryHash: payload.binaryHash ?? prevSession?.binaryHash,
+      // isLatest is derived asynchronously (see markDeviceVersionStatus); carry
+      // the previous value forward so it is not cleared on every heartbeat.
+      isLatest: prevSession?.isLatest ?? null
     });
 
     const decision = evaluateEnforcement(policy, usage, payload.currentApp, localNow);
@@ -853,6 +858,21 @@ export class WatchtowerStore {
 
   public getActiveSession(deviceId: string): ActiveSession | undefined {
     return this.activeSessions.get(deviceId);
+  }
+
+  // Record whether a device's reported binary matches the latest release. Set
+  // once per connection after the latest-release hash has been resolved.
+  public markDeviceVersionStatus(
+    deviceId: string,
+    clientVersion: string | undefined,
+    binaryHash: string | undefined,
+    isLatest: boolean | null
+  ): void {
+    const session = this.activeSessions.get(deviceId);
+    if (!session) return;
+    if (clientVersion !== undefined) session.clientVersion = clientVersion;
+    if (binaryHash !== undefined) session.binaryHash = binaryHash;
+    session.isLatest = isLatest;
   }
 
   public getAllDevices(): Array<{

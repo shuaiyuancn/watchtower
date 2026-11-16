@@ -18,7 +18,7 @@ Ask first for anything destructive or hard to undo that falls outside this flow:
 
 - Railway deploys the backend from `main` on every push. The live URL is `https://watchtower-production-3b1e.up.railway.app`.
 - Check a backend deploy by fetching an endpoint the change touched, for example `/api/install.ps1`, and looking for the new behaviour.
-- Every push to `main` also runs `release-client.yml`, which builds `watchtower.exe` and publishes it to GitHub Releases. Installed clients update themselves from that release within about 6 hours, so a merge to `main` ships the client to real devices even when only the backend changed.
+- Every push to `main` also runs `release-client.yml`, which builds `watchtower.exe` and publishes it to GitHub Releases. Installed clients update themselves from that release within about 30 minutes, so a merge to `main` ships the client to real devices even when only the backend changed.
 
 ## Commands
 
