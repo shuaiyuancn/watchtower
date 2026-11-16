@@ -16,6 +16,29 @@ dotenv.config();
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
+/**
+ * The externally-reachable base URLs to print on startup. On Railway the
+ * container binds 0.0.0.0:PORT behind a proxy, so neither the bind host nor
+ * Fastify's loopback-normalised callback address is useful — report the public
+ * Railway domain (RAILWAY_PUBLIC_DOMAIN) over HTTPS/WSS instead. Locally, fall
+ * back to a dialable address (0.0.0.0/:: → localhost) with the port.
+ */
+export function resolveStartupUrls(
+  env: NodeJS.ProcessEnv,
+  host: string,
+  port: number
+): { httpBase: string; wsBase: string } {
+  const domain = env.RAILWAY_PUBLIC_DOMAIN;
+  if (domain) {
+    return { httpBase: `https://${domain}`, wsBase: `wss://${domain}` };
+  }
+  const dialableHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
+  return {
+    httpBase: `http://${dialableHost}:${port}`,
+    wsBase: `ws://${dialableHost}:${port}`
+  };
+}
+
 // Populate req.ips from X-Forwarded-For. Rate limiting (H1) does NOT trust the
 // client-controlled left-most entry; getClientIp() keys on the proxy-appended
 // hop instead (see routes/api.ts). Set TRUST_PROXY=false to ignore XFF entirely
@@ -136,15 +159,15 @@ if (process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.
           app.log.error(err);
           process.exit(1);
         }
-        // Report the host we actually bound to. Fastify's callback address
-        // normalises 0.0.0.0 to 127.0.0.1, which wrongly implies the server is
-        // reachable only on loopback when it is listening on all interfaces.
-        const listeningAt = `http://${HOST}:${PORT}`;
-        notifySlack(`🛰️ Watchtower server started at ${listeningAt}.`);
+        // Report the externally-reachable URL: the public Railway domain when
+        // deployed, a dialable local address otherwise. The bind host (0.0.0.0)
+        // and Fastify's loopback-normalised callback address are both unhelpful.
+        const { httpBase, wsBase } = resolveStartupUrls(process.env, HOST, PORT);
+        notifySlack(`🛰️ Watchtower server started at ${httpBase}.`);
         console.log(`\n======================================================`);
-        console.log(` 🛡️  Watchtower Server running at: ${listeningAt}`);
-        console.log(` 📡 WebSocket Client Endpoint: ws://${HOST}:${PORT}/ws/client/:deviceId`);
-        console.log(` 📊 Dashboard WebSocket:       ws://${HOST}:${PORT}/ws/dashboard`);
+        console.log(` 🛡️  Watchtower Server running at: ${httpBase}`);
+        console.log(` 📡 WebSocket Client Endpoint: ${wsBase}/ws/client/:deviceId`);
+        console.log(` 📊 Dashboard WebSocket:       ${wsBase}/ws/dashboard`);
         console.log(`======================================================\n`);
       });
     })
