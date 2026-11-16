@@ -131,14 +131,18 @@ export async function createServer() {
 if (process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js')) {
   createServer()
     .then(({ app }) => {
-      app.listen({ port: PORT, host: HOST }, (err, address) => {
+      app.listen({ port: PORT, host: HOST }, (err) => {
         if (err) {
           app.log.error(err);
           process.exit(1);
         }
-        notifySlack(`🛰️ Watchtower server started at ${address}.`);
+        // Report the host we actually bound to. Fastify's callback address
+        // normalises 0.0.0.0 to 127.0.0.1, which wrongly implies the server is
+        // reachable only on loopback when it is listening on all interfaces.
+        const listeningAt = `http://${HOST}:${PORT}`;
+        notifySlack(`🛰️ Watchtower server started at ${listeningAt}.`);
         console.log(`\n======================================================`);
-        console.log(` 🛡️  Watchtower Server running at: ${address}`);
+        console.log(` 🛡️  Watchtower Server running at: ${listeningAt}`);
         console.log(` 📡 WebSocket Client Endpoint: ws://${HOST}:${PORT}/ws/client/:deviceId`);
         console.log(` 📊 Dashboard WebSocket:       ws://${HOST}:${PORT}/ws/dashboard`);
         console.log(`======================================================\n`);
