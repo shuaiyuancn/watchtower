@@ -7,8 +7,10 @@ import {
   ClientHeartbeatPayload,
   ServerCommand,
   TelemetryEvent,
-  DevicePolicy
+  DevicePolicy,
+  Platform
 } from '../types.js';
+import { parsePlatform } from '../ledger/rules.js';
 
 // Bound every field a client can send so a malicious or buggy client cannot
 // exhaust storage or memory (M2).
@@ -25,8 +27,29 @@ const HeartbeatSchema = z.object({
   utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
   autoUpdate: z.boolean().optional(),
   version: STR(32).optional(),
-  binaryHash: STR(64).optional()
+  binaryHash: STR(64).optional(),
+  // 'windows' | 'macos'. Any other value is ignored (treated as absent) by
+  // parsePlatform rather than rejecting the whole heartbeat.
+  platform: z.unknown().optional(),
+  // Display name of currentApp (macOS clients). Shown to the parent only.
+  appDisplayName: STR(128).optional()
 }).passthrough();
+
+// Sent by a client that tried to lock the screen and found it did not lock
+// (the macOS client verifies every lock).
+const LockFailedSchema = z.object({
+  type: z.literal('LOCK_FAILED'),
+  reason: STR(256).optional()
+}).passthrough();
+
+// At most one lock-failure Slack alert per device in this window.
+export const LOCK_FAILED_ALERT_INTERVAL_MS = 10 * 60 * 1000;
+
+// Client text going into a Slack message: one line, no mrkdwn or <!channel>
+// style mentions.
+function sanitizeForSlack(s: string): string {
+  return s.replace(/[\r\n\t]+/g, ' ').replace(/[<>&*_~`|]/g, '').trim().slice(0, 200);
+}
 
 const TelemetrySchema = z.object({
   type: z.literal('TELEMETRY'),
@@ -53,14 +76,21 @@ export class WebSocketHub {
   // Last enforcement state per device, so we log only on the rising edge
   // (limit newly reached) instead of every 3s heartbeat.
   private enfState: Map<string, EnforcementState> = new Map();
+  // When each device last raised a LOCK_FAILED Slack alert (debounce).
+  private lockFailedAlertAt: Map<string, number> = new Map();
 
   constructor(store: WatchtowerStore) {
     this.store = store;
   }
 
-  public registerClient(deviceId: string, ws: WebSocket): void {
+  // `platform` comes from the connect URL (?platform=macos), already validated;
+  // undefined for Windows clients, which send none.
+  public registerClient(deviceId: string, ws: WebSocket, platform?: Platform): void {
     this.clientSockets.set(deviceId, ws);
-    console.log(`[WS Hub] Device client connected: ${deviceId}`);
+    console.log(`[WS Hub] Device client connected: ${deviceId}${platform ? ` (${platform})` : ''}`);
+    // Record the platform before the first SYNC_POLICY so a new Mac is seeded
+    // with the Mac default rules.
+    const platformChanged = this.store.reportPlatform(deviceId, platform);
     // The "device connected" Slack notice is deferred to the first heartbeat so
     // it can include the client's version and whether it is up to date.
     const conn = { announced: false };
@@ -76,6 +106,9 @@ export class WebSocketHub {
       type: 'DEVICE_CONNECTED',
       deviceId
     });
+    if (platformChanged) {
+      this.broadcastToDashboards({ type: 'POLICY_UPDATED', policy });
+    }
 
     let msgCount = 0;
     let windowStart = Date.now();
@@ -230,7 +263,9 @@ export class WebSocketHub {
         utcOffsetMinutes: typeof m.utcOffsetMinutes === 'number' ? m.utcOffsetMinutes : undefined,
         autoUpdate: typeof m.autoUpdate === 'boolean' ? m.autoUpdate : undefined,
         clientVersion: typeof m.version === 'string' ? m.version : undefined,
-        binaryHash: typeof m.binaryHash === 'string' ? m.binaryHash : undefined
+        binaryHash: typeof m.binaryHash === 'string' ? m.binaryHash : undefined,
+        platform: parsePlatform(m.platform),
+        appDisplayName: typeof m.appDisplayName === 'string' ? m.appDisplayName : undefined
       };
 
       const { decision, policy, usage, policyChanged } = this.store.recordHeartbeat(payload);
@@ -293,7 +328,27 @@ export class WebSocketHub {
         type: 'TELEMETRY_EVENT',
         event
       });
+
+    } else if (msg?.type === 'LOCK_FAILED') {
+      const parsed = LockFailedSchema.safeParse(msg);
+      if (!parsed.success) {
+        console.warn(`[WS Hub] Rejected malformed LOCK_FAILED from ${deviceId}`);
+        return;
+      }
+      this.handleLockFailed(deviceId, parsed.data.reason);
     }
+  }
+
+  // The client could not lock the device. Alert the parent on Slack, at most
+  // once per device per LOCK_FAILED_ALERT_INTERVAL_MS.
+  private handleLockFailed(deviceId: string, reason: string | undefined): void {
+    const cleanReason = reason ? sanitizeForSlack(reason) : '';
+    console.warn(`[WS Hub] Lock failed on ${deviceId}${cleanReason ? `: ${cleanReason}` : ''}`);
+    const now = Date.now();
+    const last = this.lockFailedAlertAt.get(deviceId);
+    if (last !== undefined && now - last < LOCK_FAILED_ALERT_INTERVAL_MS) return;
+    this.lockFailedAlertAt.set(deviceId, now);
+    notifySlack(`🔓 *${deviceId}*: the client could not lock the screen${cleanReason ? ` (${cleanReason})` : ''}. The device may still be usable.`);
   }
 
   // Disconnect a device's socket (if any) and drop its in-memory hub state.
@@ -305,6 +360,7 @@ export class WebSocketHub {
       this.clientSockets.delete(deviceId);
     }
     this.enfState.delete(deviceId);
+    this.lockFailedAlertAt.delete(deviceId);
     this.broadcastToDashboards({ type: 'DEVICE_REMOVED', deviceId });
   }
 

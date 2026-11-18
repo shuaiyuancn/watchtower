@@ -11,14 +11,22 @@ import {
   EnforcementDecision,
   AppActivityLog,
   HourlyUsageSummary,
-  AppCategory
+  AppCategory,
+  Platform
 } from '../types.js';
 import {
-  DEFAULT_APP_RULES,
+  defaultAppRulesFor,
   evaluateEnforcement,
-  resolveAppCategory
+  isUntouchedDefaultRules,
+  policyPlatform,
+  resolveAppCategory,
+  seedAppRules
 } from './rules.js';
 import { notifySlack } from '../notify/slack.js';
+
+// Most app identifier -> display name labels remembered per device.
+export const MAX_APP_DISPLAY_NAMES = 500;
+const MAX_DISPLAY_NAME_LENGTH = 128;
 
 export interface AppDatabaseLegacy {
   policies?: Record<string, DevicePolicy>;
@@ -278,6 +286,8 @@ export class WatchtowerStore {
     for (const row of policyRows) {
       try {
         const policy: DevicePolicy = JSON.parse(row.data);
+        // Policies stored before macOS support carry no platform: Windows.
+        policy.platform = policyPlatform(policy);
         this.policies.set(row.device_id, policy);
       } catch (e) {
         console.error('Error parsing policy from SQLite:', e);
@@ -337,12 +347,17 @@ export class WatchtowerStore {
     return `${deviceId}_${dateStr}`;
   }
 
-  public getPolicy(deviceId: string): DevicePolicy {
+  // `platform` only matters when the policy does not exist yet: it picks the
+  // default app rules the new policy is seeded with. Use reportPlatform to
+  // change an existing device's platform.
+  public getPolicy(deviceId: string, platform?: Platform): DevicePolicy {
     let policy = this.policies.get(deviceId);
     if (!policy) {
+      const newPlatform: Platform = platform ?? 'windows';
       // Create default policy for new device (unlimited measurement defaults)
       policy = {
         deviceId,
+        platform: newPlatform,
         dailyGlobalLimitSeconds: 86400, // 24 hours (unlimited baseline)
         warningThresholdSeconds: 300, // 5 minutes
         emergencyLock: false,
@@ -355,7 +370,8 @@ export class WatchtowerStore {
           endMinute: 0
         },
         categoryLimits: [],
-        appRules: [...DEFAULT_APP_RULES]
+        // Copies, so editing a stored rule never mutates the shared defaults.
+        appRules: seedAppRules(newPlatform)
       };
       this.updatePolicy(policy);
     } else {
@@ -367,6 +383,49 @@ export class WatchtowerStore {
       }
     }
     return policy;
+  }
+
+  /**
+   * Record the platform a device reported (WebSocket connect or HEARTBEAT).
+   * Creates the policy seeded for that platform if the device is new. When the
+   * stored platform differs, it is updated, and the app rules are replaced by
+   * the new platform's defaults only if they are still exactly the old
+   * platform's untouched defaults. An absent platform changes nothing.
+   * Returns true if a stored policy changed.
+   */
+  public reportPlatform(deviceId: string, platform: Platform | undefined): boolean {
+    if (!platform) return false;
+    const isNew = !this.policies.has(deviceId);
+    const policy = this.getPolicy(deviceId, platform);
+    if (isNew) return true;
+    const current = policyPlatform(policy);
+    if (current === platform) return false;
+    if (isUntouchedDefaultRules(policy.appRules, current)) {
+      policy.appRules = seedAppRules(platform);
+    }
+    policy.platform = platform;
+    this.updatePolicy(policy);
+    return true;
+  }
+
+  // Remember the display name a client reported for an app identifier, so the
+  // dashboard can label it. Display only. Returns true if the policy changed.
+  private rememberDisplayName(policy: DevicePolicy, normApp: string, displayName: string | undefined): boolean {
+    const name = (displayName || '').trim().slice(0, MAX_DISPLAY_NAME_LENGTH);
+    if (!normApp || !name || name.toLowerCase() === normApp) return false;
+    const names = policy.appDisplayNames ?? {};
+    if (names[normApp] === name) return false;
+    if (!(normApp in names)) {
+      const keys = Object.keys(names);
+      // Drop the oldest labels once the cap is reached.
+      for (let i = 0; i <= keys.length - MAX_APP_DISPLAY_NAMES; i++) {
+        delete names[keys[i]];
+      }
+    }
+    names[normApp] = name;
+    policy.appDisplayNames = names;
+    this.updatePolicy(policy);
+    return true;
   }
 
   // Zero the bonus when it belongs to an earlier device-local day. Returns
@@ -440,12 +499,15 @@ export class WatchtowerStore {
     // Yesterday's bonus never carries into a new device-local day. getPolicy may
     // already roll it over, so detect the change by its date.
     const prevBonusDate = this.policies.get(payload.deviceId)?.bonusDate;
+    // A HEARTBEAT without a platform (every Windows client today) changes nothing.
+    const platformChanged = this.reportPlatform(payload.deviceId, payload.platform);
     const policy = this.getPolicy(payload.deviceId);
     this.rolloverBonus(policy, today);
-    const policyChanged = policy.bonusDate !== prevBonusDate;
+    const normApp = (payload.currentApp || '').trim().toLowerCase();
+    const displayNameChanged = this.rememberDisplayName(policy, normApp, payload.appDisplayName);
+    const policyChanged = policy.bonusDate !== prevBonusDate || platformChanged || displayNameChanged;
     const usage = this.getDailyUsage(payload.deviceId, today);
 
-    const normApp = (payload.currentApp || '').trim().toLowerCase();
     const delta = Math.max(0, Math.min(payload.elapsedActiveDeltaSeconds || 0, 60)); // safety cap
 
     if (!payload.isIdle && delta > 0 && normApp) {
@@ -516,6 +578,7 @@ export class WatchtowerStore {
     this.activeSessions.set(payload.deviceId, {
       deviceId: payload.deviceId,
       currentApp: payload.currentApp,
+      appDisplayName: payload.appDisplayName?.trim().slice(0, MAX_DISPLAY_NAME_LENGTH) || undefined,
       windowTitle: payload.windowTitle,
       category,
       isIdle: payload.isIdle,
@@ -715,10 +778,10 @@ export class WatchtowerStore {
     if (existing) {
       existing.category = newCategory;
     } else {
-      const known = DEFAULT_APP_RULES.find(r => r.executableName.toLowerCase() === norm);
+      const known = defaultAppRulesFor(policyPlatform(policy)).find(r => r.executableName.toLowerCase() === norm);
       policy.appRules.push({
         executableName: app,
-        displayName: known?.displayName || app,
+        displayName: known?.displayName || policy.appDisplayNames?.[norm] || app,
         category: newCategory,
         ...(known?.dailyLimitSeconds ? { dailyLimitSeconds: known.dailyLimitSeconds } : {}),
         ...(known?.isBlockedAlways ? { isBlockedAlways: known.isBlockedAlways } : {})

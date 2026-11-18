@@ -10,6 +10,7 @@ import { WatchtowerStore } from './ledger/store.js';
 import { WebSocketHub } from './ws/hub.js';
 import { registerApiRoutes } from './routes/api.js';
 import { notifySlack } from './notify/slack.js';
+import { parsePlatform } from './ledger/rules.js';
 
 dotenv.config();
 
@@ -93,10 +94,11 @@ export async function createServer() {
   // Register REST APIs
   registerApiRoutes(app, store, wsHub);
 
-  // WebSocket for Windows 11 Rust Client. Device auth (C1) is enforced when
-  // REQUIRE_DEVICE_AUTH=true; the client presents a device-bound token minted
-  // at enrollment (?token= over wss, or the X-Device-Token header).
-  app.get<{ Params: { deviceId: string }; Querystring: { token?: string } }>(
+  // WebSocket for device clients (Windows and macOS). Device auth (C1) is
+  // enforced when REQUIRE_DEVICE_AUTH=true; the client presents a device-bound
+  // token minted at enrollment (?token= over wss, or the X-Device-Token
+  // header). The macOS client adds ?platform=macos; Windows clients send none.
+  app.get<{ Params: { deviceId: string }; Querystring: { token?: string; platform?: string } }>(
     '/ws/client/:deviceId',
     { websocket: true },
     (socket, req) => {
@@ -109,7 +111,7 @@ export async function createServer() {
           return;
         }
       }
-      wsHub.registerClient(deviceId, socket);
+      wsHub.registerClient(deviceId, socket, parsePlatform(req.query?.platform));
     }
   );
 

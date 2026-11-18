@@ -407,6 +407,20 @@ describe('Watchtower Authentication & Password Protection', () => {
     });
     expect(ok.statusCode).toBe(200);
     expect(JSON.parse(ok.body).policy.dailyGlobalLimitSeconds).toBe(3600);
+    expect(JSON.parse(ok.body).policy.platform).toBe('windows');
+
+    // The platform and remembered display names are device-reported: a policy
+    // POST cannot change them.
+    const spoof = await app.inject({
+      method: 'POST', url: '/api/devices/PC-2/policy',
+      headers: auth, payload: { platform: 'macos', appDisplayNames: { 'x.exe': 'X' } }
+    });
+    expect(spoof.statusCode).toBe(200);
+    expect(JSON.parse(spoof.body).policy.platform).toBe('windows');
+    expect(JSON.parse(spoof.body).policy.appDisplayNames).toBeUndefined();
+    const listed = await app.inject({ method: 'GET', url: '/api/devices', headers: auth });
+    const pc2 = JSON.parse(listed.body).devices.find((d: any) => d.deviceId === 'PC-2');
+    expect(pc2.policy.platform).toBe('windows');
 
     // Lock and unlock, both without re-auth.
     const lock = await app.inject({

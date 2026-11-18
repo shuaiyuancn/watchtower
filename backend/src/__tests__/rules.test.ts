@@ -4,7 +4,15 @@ import {
   isBedtimeActive,
   normalizeBedtimeByWeekday,
   resolveAppCategory,
-  getBaseDailyLimitSeconds
+  getBaseDailyLimitSeconds,
+  parsePlatform,
+  policyPlatform,
+  defaultAppRulesFor,
+  seedAppRules,
+  isUntouchedDefaultRules,
+  isSystemSurface,
+  DEFAULT_APP_RULES,
+  MAC_DEFAULT_APP_RULES
 } from '../ledger/rules.js';
 import { DevicePolicy, DailyUsageSummary } from '../types.js';
 
@@ -276,5 +284,141 @@ describe('Watchtower Rules Engine', () => {
     // Other categories and the bare desktop are unaffected on weekdays.
     expect(evaluateEnforcement(weekendPolicy, emptyUsage, 'Code.exe', friday).shouldKillApp).toBe(false);
     expect(evaluateEnforcement(weekendPolicy, emptyUsage, 'explorer.exe', friday).shouldKillApp).toBe(false);
+  });
+});
+
+describe('Platform and app identifiers', () => {
+  const macPolicy: DevicePolicy = {
+    deviceId: 'test-mac',
+    platform: 'macos',
+    dailyGlobalLimitSeconds: 7200,
+    warningThresholdSeconds: 300,
+    emergencyLock: false,
+    bonusSecondsToday: 0,
+    bedtime: { enabled: false, startHour: 21, startMinute: 0, endHour: 7, endMinute: 0 },
+    categoryLimits: [{ category: 'Games', dailyLimitSeconds: 3600 }],
+    appRules: [
+      { executableName: 'com.roblox.RobloxPlayer', displayName: 'Roblox', category: 'Games', dailyLimitSeconds: 1800 },
+      { executableName: 'com.example.BlockedGame', displayName: 'Blocked Game', category: 'Games', isBlockedAlways: true }
+    ]
+  };
+
+  const usage = (over: Partial<DailyUsageSummary> = {}): DailyUsageSummary => ({
+    date: '2026-08-23',
+    deviceId: 'test-mac',
+    totalActiveSeconds: 0,
+    categorySeconds: { Games: 0, Browsers: 0, Social: 0, Media: 0, Education: 0, Productivity: 0, System: 0, Other: 0 },
+    appSeconds: {},
+    ...over
+  });
+
+  it('parses only the two known platforms', () => {
+    expect(parsePlatform('windows')).toBe('windows');
+    expect(parsePlatform('macos')).toBe('macos');
+    for (const bad of ['MacOS', 'darwin', 'linux', '', ' macos', 1, null, undefined, {}, ['macos']]) {
+      expect(parsePlatform(bad)).toBeUndefined();
+    }
+  });
+
+  it('defaults a policy without a platform to windows', () => {
+    expect(policyPlatform({})).toBe('windows');
+    expect(policyPlatform({ platform: 'windows' })).toBe('windows');
+    expect(policyPlatform({ platform: 'macos' })).toBe('macos');
+    // A corrupt stored value is not trusted.
+    expect(policyPlatform({ platform: 'beos' as never })).toBe('windows');
+  });
+
+  it('picks the default rule list by platform', () => {
+    expect(defaultAppRulesFor(undefined)).toBe(DEFAULT_APP_RULES);
+    expect(defaultAppRulesFor('windows')).toBe(DEFAULT_APP_RULES);
+    expect(defaultAppRulesFor('macos')).toBe(MAC_DEFAULT_APP_RULES);
+    // The Mac list is keyed by bundle identifier, with no executables in it.
+    expect(MAC_DEFAULT_APP_RULES.some((r) => r.executableName.toLowerCase().endsWith('.exe'))).toBe(false);
+    const ids = MAC_DEFAULT_APP_RULES.map((r) => r.executableName.toLowerCase());
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('seeds copies, so editing a seeded rule leaves the defaults alone', () => {
+    const seeded = seedAppRules('macos');
+    expect(seeded).toEqual(MAC_DEFAULT_APP_RULES);
+    seeded[0].category = 'Other';
+    expect(MAC_DEFAULT_APP_RULES[0].category).toBe('Games');
+  });
+
+  it('recognises untouched default rules and nothing else', () => {
+    expect(isUntouchedDefaultRules(seedAppRules('windows'), 'windows')).toBe(true);
+    expect(isUntouchedDefaultRules(seedAppRules('macos'), 'macos')).toBe(true);
+    expect(isUntouchedDefaultRules(seedAppRules('macos'), 'windows')).toBe(false);
+
+    const edited = seedAppRules('windows');
+    edited[0] = { ...edited[0], dailyLimitSeconds: 600 };
+    expect(isUntouchedDefaultRules(edited, 'windows')).toBe(false);
+
+    expect(isUntouchedDefaultRules(seedAppRules('windows').slice(1), 'windows')).toBe(false);
+    expect(isUntouchedDefaultRules([...seedAppRules('windows'), { executableName: 'x.exe', displayName: 'X', category: 'Other' }], 'windows')).toBe(false);
+    expect(isUntouchedDefaultRules(seedAppRules('windows').reverse(), 'windows')).toBe(false);
+    expect(isUntouchedDefaultRules([], 'windows')).toBe(false);
+  });
+
+  it('resolves a bundle identifier case-insensitively against the Mac defaults', () => {
+    const p = { ...macPolicy, appRules: [] };
+    expect(resolveAppCategory('com.google.chrome', p).category).toBe('Browsers');
+    expect(resolveAppCategory('COM.APPLE.SAFARI', p).category).toBe('Browsers');
+    expect(resolveAppCategory('com.hnc.Discord', p).category).toBe('Social');
+    // Windows executables are not in a Mac device's knowledge base, and vice versa.
+    expect(resolveAppCategory('chrome.exe', p).category).toBe('Other');
+    expect(resolveAppCategory('com.google.Chrome', { ...p, platform: undefined }).category).toBe('Other');
+    expect(resolveAppCategory('chrome.exe', { ...p, platform: undefined }).category).toBe('Browsers');
+  });
+
+  it('enforces rules on a bundle identifier with an exact lowercased match', () => {
+    const blocked = evaluateEnforcement(macPolicy, usage(), 'com.example.blockedgame');
+    expect(blocked.shouldKillApp).toBe(true);
+    expect(blocked.reason).toBe('APP_BLOCKED_ALWAYS');
+
+    // Usage is keyed by the lowercased identifier.
+    const robloxDone = evaluateEnforcement(
+      macPolicy,
+      usage({ totalActiveSeconds: 1800, appSeconds: { 'com.roblox.robloxplayer': 1800 } }),
+      'com.roblox.RobloxPlayer'
+    );
+    expect(robloxDone.reason).toBe('APP_LIMIT_EXHAUSTED');
+
+    // A longer or shorter identifier does not match.
+    expect(evaluateEnforcement(macPolicy, usage(), 'com.example.BlockedGame.helper').shouldKillApp).toBe(false);
+    expect(evaluateEnforcement(macPolicy, usage(), 'com.example').shouldKillApp).toBe(false);
+  });
+
+  it('treats Finder and loginwindow as system surfaces, like explorer.exe and lockapp.exe', () => {
+    for (const app of ['', '   ', 'explorer.exe', 'LockApp.exe', 'com.apple.finder', 'com.apple.Finder', 'com.apple.loginwindow']) {
+      expect(isSystemSurface(app)).toBe(true);
+    }
+    expect(isSystemSurface('com.apple.Safari')).toBe(false);
+
+    // A rule naming a system surface is not enforced on it...
+    const p: DevicePolicy = {
+      ...macPolicy,
+      appRules: [{ executableName: 'com.apple.finder', displayName: 'Finder', category: 'Games', isBlockedAlways: true }]
+    };
+    expect(evaluateEnforcement(p, usage(), 'com.apple.finder').shouldKillApp).toBe(false);
+    expect(evaluateEnforcement(p, usage(), 'com.apple.loginwindow').shouldKillApp).toBe(false);
+    // ...but whole-device controls still lock it.
+    expect(evaluateEnforcement({ ...p, emergencyLock: true }, usage(), 'com.apple.finder').shouldLogoffUser).toBe(true);
+    expect(evaluateEnforcement(p, usage({ totalActiveSeconds: 7200 }), 'com.apple.loginwindow').shouldLogoffUser).toBe(true);
+  });
+
+  it('names the device in lock warnings by platform, keeping the Windows wording', () => {
+    const exhausted = usage({ totalActiveSeconds: 7200 });
+    expect(evaluateEnforcement(macPolicy, exhausted, 'com.apple.Safari').warningMessage)
+      .toBe('Daily screen time limit reached! Locking Mac...');
+    expect(evaluateEnforcement({ ...macPolicy, platform: undefined }, exhausted, 'chrome.exe').warningMessage)
+      .toBe('Daily screen time limit reached! Locking PC...');
+
+    const bedtime = { enabled: true, startHour: 21, startMinute: 0, endHour: 7, endMinute: 0 };
+    const night = new Date('2026-08-24T22:00:00Z');
+    expect(evaluateEnforcement({ ...macPolicy, bedtime }, usage(), 'com.apple.Safari', night).warningMessage)
+      .toBe('Bedtime curfew is active. Mac is locked.');
+    expect(evaluateEnforcement({ ...macPolicy, platform: 'windows', bedtime }, usage(), 'chrome.exe', night).warningMessage)
+      .toBe('Bedtime curfew is active. PC is locked.');
   });
 });
