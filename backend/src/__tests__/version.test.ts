@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import { WatchtowerStore } from '../ledger/store.js';
 import { ClientHeartbeatPayload } from '../types.js';
-import { parseSha256, compareToLatest } from '../release/latest.js';
+import { parseSha256, compareToLatest, releaseAssetUrl } from '../release/latest.js';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -29,6 +29,11 @@ describe('release/latest helpers', () => {
     expect(parseSha256(HASH_A.toUpperCase() + '  watchtower.exe\n')).toBe(HASH_A);
     expect(parseSha256('no hash here')).toBeNull();
     expect(parseSha256('')).toBeNull();
+  });
+
+  it('releaseAssetUrl names each platform\'s release binary', () => {
+    expect(releaseAssetUrl('windows')).toBe('https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe');
+    expect(releaseAssetUrl('macos')).toBe('https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower-macos-arm64');
   });
 
   it('compareToLatest is case-insensitive and null when either side is unknown', () => {

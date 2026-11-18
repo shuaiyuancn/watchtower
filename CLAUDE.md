@@ -6,9 +6,9 @@ Claude is the only coder on this repo and owns the work from change to productio
 
 1. Branch from `origin/main`. Never commit to `main` directly.
 2. Implement the change and run the tests listed under Commands.
-3. Review your own diff before you merge. Look for correctness bugs, security problems in generated PowerShell, and anything that could leave a client stopped. Fix what you find and push.
+3. Review your own diff before you merge. Look for correctness bugs, security problems in generated PowerShell and bash, and anything that could leave a client stopped. Fix what you find and push.
 4. Open a pull request that is ready for review, with a body that says what was tested and what was not.
-5. Wait for both CI jobs (`backend` and `client`) to pass.
+5. Wait for all three CI jobs (`backend`, `client` and `client-macos`) to pass.
 6. Squash-merge with `gh pr merge <n> --squash --delete-branch`.
 7. Confirm the deploy is live, then report what you verified and what is still untested.
 
@@ -18,7 +18,7 @@ Ask first for anything destructive or hard to undo that falls outside this flow:
 
 - Railway deploys the backend from `main` on every push. The live URL is `https://watchtower-production-3b1e.up.railway.app`.
 - Check a backend deploy by fetching an endpoint the change touched, for example `/api/install.ps1`, and looking for the new behaviour.
-- Every push to `main` also runs `release-client.yml`, which builds `watchtower.exe` and publishes it to GitHub Releases. Installed clients update themselves from that release within about 30 minutes, so a merge to `main` ships the client to real devices even when only the backend changed.
+- Every push to `main` also runs `release-client.yml`, which builds `watchtower.exe` and `watchtower-macos-arm64` in two independent jobs and publishes both, each with a `.sha256` file, to the same GitHub Release. Installed Windows clients update themselves from that release within about 30 minutes and Macs within about 6 hours, so a merge to `main` ships the client to real devices even when only the backend changed.
 
 ## Commands
 
@@ -32,4 +32,6 @@ cd client && cargo test     # Rust client tests (Windows)
 
 The install and uninstall scripts are TypeScript template strings in `backend/src/routes/api.ts`. Inside them, double every backslash, escape backticks, and avoid PowerShell's `${var}` form because the template would interpolate it. After editing, request the script from a test server and parse it with `[System.Management.Automation.Language.Parser]::ParseInput` to catch syntax errors. Read the file as UTF-8, because the scripts contain emoji.
 
-Any query value embedded in a script must be reduced to an allowlist of characters first, as `user` is.
+The macOS bash scripts (`install.sh`, `uninstall.sh`, the helper and the removal script) are template strings in `backend/src/routes/macos-scripts.ts`, under the same rules: double backslashes, no backticks, and never bash's `${var}` form (write `$var` or `"$var"`). Request them from a test server and check each with `bash -n`; `backend/src/__tests__/macos-scripts.test.ts` does this.
+
+Any query value or header embedded in a script must be reduced to an allowlist of characters first, as `user` is. In bash, embedded values go inside single quotes.

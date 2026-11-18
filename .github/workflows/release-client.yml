@@ -1,4 +1,4 @@
-name: Build & Release Windows 11 Client
+name: Build & Release Clients
 
 on:
   push:
@@ -55,3 +55,65 @@ jobs:
             watchtower.exe.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Independent of the Windows job on purpose: no `needs` either way, so a macOS
+  # build failure can never hold back the Windows release.
+  build-and-release-macos:
+    name: Build Native macOS Client (Apple Silicon)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+
+      - name: Build Release Binary
+        working-directory: ./client
+        run: cargo build --release
+
+      - name: Prepare Binary Artifacts
+        run: |
+          cp client/target/release/watchtower-client watchtower-macos-arm64
+          chmod 755 watchtower-macos-arm64
+          # Bare lowercase hex, which is what the macOS installer and helper read.
+          shasum -a 256 watchtower-macos-arm64 | cut -d ' ' -f 1 | tr 'A-F' 'a-f' > watchtower-macos-arm64.sha256
+          file watchtower-macos-arm64
+          # The linker ad-hoc signs arm64 binaries; an unsigned one would be killed at launch.
+          codesign -dv watchtower-macos-arm64
+          echo "Generated watchtower-macos-arm64 (SHA256: $(cat watchtower-macos-arm64.sha256))"
+
+      # Upload into the release the Windows job publishes (same tag logic), with
+      # gh instead of a second softprops/action-gh-release step. softprops creates
+      # the release when the tag has none, so two jobs running it at once on a new
+      # v* tag can both try to create it. Here the macOS job waits for the release
+      # to exist, creates it only if it never appears (Windows job failed), and
+      # `gh release upload --clobber` replaces only the two macOS assets.
+      - name: Publish macOS Assets to the GitHub Release
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
+          RELEASE_NAME: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'Latest Client Build' }}
+        run: |
+          for attempt in $(seq 1 60); do
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for release $RELEASE_TAG to exist ($attempt/60)..."
+            sleep 20
+          done
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_NAME" --notes "" \
+              || gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+          gh release upload "$RELEASE_TAG" watchtower-macos-arm64 watchtower-macos-arm64.sha256 \
+            --repo "$GITHUB_REPOSITORY" --clobber

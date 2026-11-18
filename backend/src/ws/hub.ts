@@ -10,7 +10,7 @@ import {
   DevicePolicy,
   Platform
 } from '../types.js';
-import { parsePlatform } from '../ledger/rules.js';
+import { parsePlatform, policyPlatform } from '../ledger/rules.js';
 
 // Bound every field a client can send so a malicious or buggy client cannot
 // exhaust storage or memory (M2).
@@ -217,9 +217,18 @@ export class WebSocketHub {
     clientVersion: string | undefined,
     binaryHash: string | undefined
   ): Promise<void> {
+    // Compare against the release asset of the device's own platform: a Mac
+    // runs watchtower-macos-arm64, not watchtower.exe.
+    let platform: Platform = 'windows';
+    try {
+      platform = policyPlatform(this.store.getPolicy(deviceId));
+    } catch {
+      platform = 'windows';
+    }
+
     let isLatest: boolean | null = null;
     try {
-      const latest = await getLatestBinaryHash();
+      const latest = await getLatestBinaryHash(platform);
       isLatest = compareToLatest(latest, binaryHash);
     } catch {
       isLatest = null;
@@ -228,11 +237,13 @@ export class WebSocketHub {
     this.store.markDeviceVersionStatus(deviceId, clientVersion, binaryHash, isLatest);
 
     const versionLabel = clientVersion ? `v${clientVersion}` : 'unknown version';
+    // Windows clients check every 30 minutes; the macOS helper every 6 hours.
+    const updateWindow = platform === 'macos' ? '~6h' : '~30m';
     const hint =
       isLatest === true
         ? '✅ up to date'
         : isLatest === false
-          ? '⚠️ outdated — will auto-update within ~30m'
+          ? `⚠️ outdated — will auto-update within ${updateWindow}`
           : 'ℹ️ version status unknown';
     notifySlack(`🟢 Watchtower device connected: *${deviceId}* — ${versionLabel} (${hint})`);
 
