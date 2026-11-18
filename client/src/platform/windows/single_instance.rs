@@ -1,16 +1,15 @@
-﻿#[cfg(windows)]
+//! Single-instance guard backed by a named Win32 mutex.
+
 use windows::core::HSTRING;
-#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
-#[cfg(windows)]
 use windows::Win32::System::Threading::CreateMutexW;
 
+const INSTANCE_MUTEX_NAME: &str = "WatchtowerClientDaemonMutex";
+
 pub struct SingleInstanceGuard {
-    #[cfg(windows)]
     handle: HANDLE,
 }
 
-#[cfg(windows)]
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
         if !self.handle.is_invalid() {
@@ -21,11 +20,14 @@ impl Drop for SingleInstanceGuard {
     }
 }
 
+/// Returns Some(SingleInstanceGuard) if this is the only running instance of
+/// the client, or None if another instance already holds the mutex.
+pub fn acquire_single_instance() -> Option<SingleInstanceGuard> {
+    acquire_named_mutex(INSTANCE_MUTEX_NAME)
+}
+
 /// Attempts to acquire a single-instance named mutex on Windows.
-/// Returns Some(SingleInstanceGuard) if this is the only running instance,
-/// or None if another instance is already running.
-pub fn acquire_single_instance(app_id: &str) -> Option<SingleInstanceGuard> {
-    #[cfg(windows)]
+fn acquire_named_mutex(app_id: &str) -> Option<SingleInstanceGuard> {
     unsafe {
         // Try global mutex first (handles cross-session if elevated), fallback to Local (user session)
         let global_name = HSTRING::from(format!("Global\\{app_id}"));
@@ -48,11 +50,5 @@ pub fn acquire_single_instance(app_id: &str) -> Option<SingleInstanceGuard> {
         }
 
         None
-    }
-
-    #[cfg(not(windows))]
-    {
-        let _ = app_id;
-        Some(SingleInstanceGuard {})
     }
 }

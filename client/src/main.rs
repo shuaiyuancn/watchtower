@@ -5,36 +5,32 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
-mod enforcer;
 mod notifier;
-mod single_instance;
+mod platform;
 mod sync;
 mod telemetry;
 mod tracker;
-mod tray;
 mod types;
 mod updater;
 
-#[cfg(windows)]
-fn hide_console_window() {
-    unsafe {
-        use windows::Win32::System::Console::GetConsoleWindow;
-        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
-        let hwnd = GetConsoleWindow();
-        if hwnd.0 as usize != 0 {
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        }
-    }
+fn main() {
+    // The platform owns the main thread; the client itself runs on a tokio
+    // runtime built the same way #[tokio::main] builds one.
+    platform::run_main_thread(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed building the Runtime")
+            .block_on(run_client());
+    });
 }
 
-#[tokio::main]
-async fn main() {
+async fn run_client() {
     let args: Vec<String> = env::args().collect();
     let is_foreground = args.iter().any(|a| a == "--foreground" || a == "--debug");
 
-    #[cfg(windows)]
     if !is_foreground {
-        hide_console_window();
+        platform::hide_console();
     }
 
     // Configure clean, human-readable logging without raw ANSI escape codes
@@ -55,12 +51,11 @@ async fn main() {
     // outgoing instance for the single-instance mutex; retry a few times.
     let post_update = args.iter().any(|a| a == updater::UPDATED_ARG);
 
-    #[cfg(windows)]
     let _single_instance_guard = {
         let attempts = if post_update { 20 } else { 1 };
         let mut guard = None;
         for i in 0..attempts {
-            if let Some(g) = single_instance::acquire_single_instance("WatchtowerClientDaemonMutex") {
+            if let Some(g) = platform::acquire_single_instance() {
                 guard = Some(g);
                 break;
             }
@@ -94,7 +89,7 @@ async fn main() {
     info!("Loaded config: Device ID='{}', Server='{}'", client_config.device_id, client_config.server_url);
 
     // Initialize System Tray Icon
-    tray::init_system_tray(client_config.device_id.clone());
+    platform::start_tray(client_config.device_id.clone());
 
     // Periodic self-update from the published GitHub release.
     if client_config.auto_update {

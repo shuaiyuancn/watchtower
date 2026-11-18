@@ -2,16 +2,11 @@ use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::config::ClientConfig;
-
-const RELEASE_BINARY_URL: &str =
-    "https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe";
-const RELEASE_SHA_URL: &str =
-    "https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe.sha256";
+use crate::platform;
 
 /// Marker arg passed to the freshly-updated process so it knows to wait for the
 /// previous instance to release the single-instance mutex.
@@ -58,13 +53,13 @@ pub fn needs_update(current_sha: &str, expected_sha: &str) -> bool {
     !current_sha.eq_ignore_ascii_case(expected)
 }
 
-/// Sibling `.exe.new` / `.exe.old` paths for the given executable. Uses PathBuf
-/// operations (no string concatenation) so it is correct for Windows 8.3 short
-/// paths and paths containing spaces.
+/// Sibling new / backup paths for the given executable (`.exe.new` /
+/// `.exe.old` on Windows). Uses PathBuf operations (no string concatenation)
+/// so it is correct for Windows 8.3 short paths and paths containing spaces.
 pub fn update_target_paths(current_exe: &Path) -> (PathBuf, PathBuf) {
     (
-        current_exe.with_extension("exe.new"),
-        current_exe.with_extension("exe.old"),
+        current_exe.with_extension(platform::UPDATE_NEW_EXTENSION),
+        current_exe.with_extension(platform::UPDATE_OLD_EXTENSION),
     )
 }
 
@@ -100,7 +95,7 @@ pub async fn check_and_update() {
     };
     let current_sha = sha256_hex(&current_bytes);
 
-    let sha_text = match reqwest::get(RELEASE_SHA_URL).await {
+    let sha_text = match reqwest::get(platform::RELEASE_CHECKSUM_URL).await {
         Ok(r) => match r.text().await {
             Ok(t) => t,
             Err(e) => {
@@ -128,7 +123,7 @@ pub async fn check_and_update() {
     }
 
     info!("[update] new version available; updating...");
-    if let Err(e) = perform_self_update(RELEASE_BINARY_URL, &expected).await {
+    if let Err(e) = perform_self_update(platform::RELEASE_ASSET_URL, &expected).await {
         error!("[update] self-update failed: {}", e);
     }
 }
@@ -173,6 +168,7 @@ pub async fn perform_self_update(download_url: &str, expected_sha256: &str) -> R
     fs::write(&new_exe, &bytes).map_err(|e| format!("Failed to write new binary: {}", e))?;
 
     // 4. Rename running binary to .exe.old (allowed by Windows), then swap in new.
+    //    Unix also allows renaming a running binary, so the same order works there.
     if old_exe.exists() {
         let _ = fs::remove_file(&old_exe);
     }
@@ -189,14 +185,8 @@ pub async fn perform_self_update(download_url: &str, expected_sha256: &str) -> R
     // 5. Spawn new executable, preserving original args (e.g. --config) plus the
     //    UPDATED_ARG marker so it waits out the single-instance mutex.
     let original: Vec<String> = env::args().collect();
-    let mut cmd = Command::new(&current_exe);
-    cmd.args(relaunch_args(&original));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd.spawn().map_err(|e| format!("Failed to relaunch: {}", e))?;
+    platform::relaunch(&current_exe, &relaunch_args(&original))
+        .map_err(|e| format!("Failed to relaunch: {}", e))?;
 
     // 6. Terminate old process so it releases the mutex and file handle.
     std::process::exit(0);
@@ -257,6 +247,18 @@ mod tests {
         assert!(!needs_update(&a, &"z".repeat(64)));
     }
 
+    #[test]
+    fn update_target_paths_are_siblings_with_platform_extensions() {
+        let p = Path::new("dir/watchtower.exe");
+        let (new_exe, old_exe) = update_target_paths(p);
+        assert_eq!(new_exe, p.with_extension(platform::UPDATE_NEW_EXTENSION));
+        assert_eq!(old_exe, p.with_extension(platform::UPDATE_OLD_EXTENSION));
+        assert_ne!(new_exe, old_exe);
+        assert_eq!(new_exe.parent(), p.parent());
+        assert_eq!(old_exe.parent(), p.parent());
+    }
+
+    #[cfg(windows)]
     #[test]
     fn update_target_paths_are_siblings_with_correct_suffixes() {
         // Includes a Windows 8.3-style short path and a space to guard path handling.

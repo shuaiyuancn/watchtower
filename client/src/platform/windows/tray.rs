@@ -1,7 +1,8 @@
-﻿use std::thread;
+//! The Watchtower tray icon, run on its own thread with a Win32 message pump.
+
+use std::thread;
 use tracing::{info, warn};
 
-#[cfg(windows)]
 use windows::{
     core::{w, PCWSTR},
     Win32::{
@@ -22,21 +23,12 @@ use windows::{
 
 const WM_TRAY_CALLBACK: u32 = WM_USER + 101;
 
-pub fn init_system_tray(device_id: String) {
-    #[cfg(windows)]
-    {
-        thread::spawn(move || {
-            run_windows_tray(device_id);
-        });
-    }
-
-    #[cfg(not(windows))]
-    {
-        let _ = device_id;
-    }
+pub fn start_tray(device_id: String) {
+    thread::spawn(move || {
+        run_windows_tray(device_id);
+    });
 }
 
-#[cfg(windows)]
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     msg: u32,
@@ -53,7 +45,6 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-#[cfg(windows)]
 fn run_windows_tray(device_id: String) {
     unsafe {
         let hinstance = match GetModuleHandleW(PCWSTR::null()) {

@@ -5,12 +5,10 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
 use crate::config::ClientConfig;
-use crate::enforcer::{execute_lock_workstation, kill_target_process};
-use crate::notifier::show_warning_toast;
+use crate::notifier::show_warning;
+use crate::platform::{self, ForegroundApp};
 use crate::telemetry::{inspect_im_activity, inspect_youtube_activity};
-use crate::tracker::{
-    counts_as_idle, get_foreground_info, get_idle_time_seconds, is_session_locked, ForegroundInfo,
-};
+use crate::tracker::counts_as_idle;
 use crate::types::{ClientHeartbeat, ServerMessage};
 
 /// Returns true if the host portion of a ws(s) URL is a loopback address.
@@ -93,14 +91,10 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 break;
                             }
 
-                            let fg_info = get_foreground_info().unwrap_or(ForegroundInfo {
-                                executable_name: "unknown.exe".to_string(),
-                                window_title: String::new(),
-                                pid: 0,
-                            });
-                            let idle_secs = get_idle_time_seconds();
+                            let fg_info = platform::foreground_app().unwrap_or_else(ForegroundApp::unknown);
+                            let idle_secs = platform::idle_seconds();
                             // Idle after 2 minutes of no input, or immediately while the desktop is locked.
-                            let is_idle = counts_as_idle(idle_secs, is_session_locked());
+                            let is_idle = counts_as_idle(idle_secs, platform::is_locked());
 
                             // 3. Compute active delta capped to maximum 2x interval to prevent sleep spikes
                             let raw_delta = if !is_idle {
@@ -110,7 +104,7 @@ pub async fn run_sync_loop(config: ClientConfig) {
                             };
                             let elapsed_delta = raw_delta.min(config.heartbeat_interval_secs * 2);
                             last_active_ts = now;
-                            last_app = fg_info.executable_name.clone();
+                            last_app = fg_info.app_id.clone();
 
                             // 4. Send Heartbeat
                             let utc_offset_minutes = chrono::Local::now().offset().local_minus_utc() / 60;
@@ -118,7 +112,7 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 msg_type: "HEARTBEAT".to_string(),
                                 device_id: config.device_id.clone(),
                                 hostname: config.device_id.clone(),
-                                current_app: fg_info.executable_name.clone(),
+                                current_app: fg_info.app_id.clone(),
                                 window_title: fg_info.window_title.clone(),
                                 is_idle,
                                 idle_seconds: idle_secs,
@@ -136,17 +130,19 @@ pub async fn run_sync_loop(config: ClientConfig) {
                                 }
                             }
 
-                            // 5. Telemetry Inspection (YouTube)
-                            if let Some(yt_event) = inspect_youtube_activity(&config.device_id, &fg_info.executable_name, &fg_info.window_title) {
-                                if let Ok(json_str) = serde_json::to_string(&yt_event) {
-                                    let _ = write.send(Message::Text(json_str)).await;
+                            if platform::TELEMETRY_SUPPORTED {
+                                // 5. Telemetry Inspection (YouTube)
+                                if let Some(yt_event) = inspect_youtube_activity(&config.device_id, &fg_info.app_id, &fg_info.window_title) {
+                                    if let Ok(json_str) = serde_json::to_string(&yt_event) {
+                                        let _ = write.send(Message::Text(json_str)).await;
+                                    }
                                 }
-                            }
 
-                            // 6. Telemetry Inspection (IM)
-                            if let Some(im_event) = inspect_im_activity(&config.device_id, &fg_info.executable_name, &fg_info.window_title) {
-                                if let Ok(json_str) = serde_json::to_string(&im_event) {
-                                    let _ = write.send(Message::Text(json_str)).await;
+                                // 6. Telemetry Inspection (IM)
+                                if let Some(im_event) = inspect_im_activity(&config.device_id, &fg_info.app_id, &fg_info.window_title) {
+                                    if let Ok(json_str) = serde_json::to_string(&im_event) {
+                                        let _ = write.send(Message::Text(json_str)).await;
+                                    }
                                 }
                             }
                         }
@@ -197,7 +193,7 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
         if let Some(decision) = server_msg.decision {
             if decision.should_warn {
                 if let Some(ref msg) = decision.warning_message {
-                    show_warning_toast("Watchtower Alert", msg);
+                    show_warning("Watchtower Alert", msg);
                 }
             }
 
@@ -205,7 +201,7 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
                 let target = current_app;
                 if !target.is_empty() {
                     warn!("Enforcement: Killing {}", target);
-                    kill_target_process(None, target);
+                    platform::quit_app(target);
                 }
             }
 
@@ -214,7 +210,7 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
                 // while the limit/curfew holds, so if it is unlocked it locks
                 // again within seconds.
                 warn!("Enforcement: Daily limit or curfew reached. Locking workstation!");
-                execute_lock_workstation();
+                platform::lock_device();
             }
         }
 
@@ -222,22 +218,22 @@ async fn handle_server_message(raw_text: &str, current_app: &str) {
         if let Some(cmd) = server_msg.command {
             match cmd.action.as_str() {
                 "LOCK_NOW" => {
-                    show_warning_toast("Watchtower", "PC locked by parent.");
-                    execute_lock_workstation();
+                    show_warning("Watchtower", "PC locked by parent.");
+                    platform::lock_device();
                 }
                 "KILL_APP" => {
                     if let Some(app) = cmd.target_app {
-                        kill_target_process(None, &app);
+                        platform::quit_app(&app);
                     }
                 }
                 "GRANT_TIME" => {
                     if let Some(msg) = cmd.message {
-                        show_warning_toast("Time Granted!", &msg);
+                        show_warning("Time Granted!", &msg);
                     }
                 }
                 "SHOW_WARNING" => {
                     if let Some(msg) = cmd.message {
-                        show_warning_toast("Watchtower Warning", &msg);
+                        show_warning("Watchtower Warning", &msg);
                     }
                 }
                 _ => {}
