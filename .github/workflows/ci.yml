@@ -57,8 +57,8 @@ jobs:
 
   client-macos:
     name: client-macos
-    # Pinned to an Apple Silicon image; the step below fails if it is not arm64.
-    runs-on: macos-15
+    # macos-latest is an Apple Silicon image; the step below fails if it is not arm64.
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
