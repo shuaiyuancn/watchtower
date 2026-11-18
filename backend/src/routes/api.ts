@@ -4,6 +4,15 @@ import { WebSocketHub } from '../ws/hub.js';
 import { DevicePolicy } from '../types.js';
 import { notifySlack } from '../notify/slack.js';
 import { normalizeBedtimeByWeekday } from '../ledger/rules.js';
+import {
+  parseMacUser,
+  parseEnrollKey,
+  sanitizeHost,
+  macErrorScript,
+  macInstallScript,
+  macUninstallWrapperScript,
+  MAC_REMOVAL_SCRIPT
+} from './macos-scripts.js';
 
 // Rate limiting: exponential backoff plus a hard lockout after repeated failures.
 const BASE_COOLDOWN_MS = 5000;      // cooldown after the first failure
@@ -697,8 +706,46 @@ Write-Host " Watchtower Client successfully installed, running in background, an
     return script;
   });
 
-  // Authenticated Uninstaller Payload Executor
-  server.post<{ Body: { password: string } }>('/api/uninstall/execute', async (req, reply) => {
+  // macOS installer (hardened only): run as root for a child's Standard account.
+  //   curl -fsSL "<server>/api/install.sh?user=<short name>[&key=<secret>]" | sudo bash
+  // Server URLs are derived like install.ps1's; every embedded value is reduced
+  // to an allowlist first and placed inside single quotes in the bash.
+  server.get<{ Querystring: { key?: string; user?: string } }>('/api/install.sh', async (req, reply) => {
+    reply.type('text/plain; charset=utf-8');
+    const user = parseMacUser(req.query?.user);
+    if (user === '') {
+      return reply.code(400).send(macErrorScript('user is required: add ?user=NAME to the URL, where NAME is the child account short name.'));
+    }
+    if (user === null) {
+      return reply.code(400).send(macErrorScript('user must be a macOS short account name: letters, digits, dot, underscore or hyphen, not starting with a hyphen, at most 64 characters.'));
+    }
+    const enrollKey = parseEnrollKey(req.query?.key);
+    if (enrollKey === null) {
+      return reply.code(400).send(macErrorScript('key has characters an enrollment secret cannot contain.'));
+    }
+    const host = sanitizeHost(req.headers.host, '127.0.0.1:4000');
+    const https = req.headers['x-forwarded-proto'] === 'https';
+    return macInstallScript({
+      user,
+      enrollKey,
+      wsUrl: `${https ? 'wss' : 'ws'}://${host}/ws/client`,
+      httpBase: `${https ? 'https' : 'http'}://${host}`
+    });
+  });
+
+  // macOS protected uninstaller wrapper; the removal script itself is only
+  // returned by /api/uninstall/execute after the password checks out.
+  server.get('/api/uninstall.sh', async (req, reply) => {
+    const protocol = req.protocol === 'https' ? 'https' : 'http';
+    const host = sanitizeHost(req.headers.host, 'localhost:4000');
+    reply.type('text/plain; charset=utf-8');
+    return macUninstallWrapperScript(`${protocol}://${host}`);
+  });
+
+  // Authenticated Uninstaller Payload Executor. Windows sends JSON
+  // { password }. The macOS wrapper sends the password as a text/plain body
+  // (it has no JSON encoder) with ?platform=macos. platform defaults to windows.
+  server.post<{ Body: { password?: string; platform?: string } | string; Querystring: { platform?: string } }>('/api/uninstall/execute', async (req, reply) => {
     const ip = getClientIp(req);
     const rateCheck = checkAuthRateLimit(ip);
     if (!rateCheck.allowed) {
@@ -710,7 +757,12 @@ Write-Host " Watchtower Client successfully installed, running in background, an
       });
     }
 
-    const { password } = req.body || {};
+    const body = req.body;
+    const password = typeof body === 'string' ? body : body?.password;
+    const platformRaw = (typeof body === 'object' && body !== null ? body.platform : undefined) ?? req.query?.platform ?? 'windows';
+    if (platformRaw !== 'windows' && platformRaw !== 'macos') {
+      return reply.code(400).send({ success: false, error: "platform must be 'windows' or 'macos'" });
+    }
     if (!password && password !== '') {
       return reply.code(400).send({ success: false, error: 'Password is required' });
     }
@@ -728,6 +780,10 @@ Write-Host " Watchtower Client successfully installed, running in background, an
     }
 
     clearRateLimit(ip);
+    if (platformRaw === 'macos') {
+      notifySlack(`🗑️ Watchtower uninstall payload issued to ${ip} (macOS).`);
+      return { success: true, script: MAC_REMOVAL_SCRIPT };
+    }
     notifySlack(`🗑️ Watchtower uninstall payload issued to ${ip}.`);
 
     const removalScript = `# Dynamic Watchtower Removal Payload

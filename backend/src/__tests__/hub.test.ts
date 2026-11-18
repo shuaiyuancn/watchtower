@@ -15,6 +15,7 @@ vi.mock('../release/latest.js', () => ({
 }));
 
 import { notifySlack } from '../notify/slack.js';
+import { getLatestBinaryHash, compareToLatest } from '../release/latest.js';
 import { WatchtowerStore } from '../ledger/store.js';
 import { WebSocketHub, LOCK_FAILED_ALERT_INTERVAL_MS } from '../ws/hub.js';
 import { MAC_DEFAULT_APP_RULES } from '../ledger/rules.js';
@@ -144,6 +145,28 @@ describe('WebSocketHub', () => {
       const ws = connect('long-name');
       ws.receive({ type: 'HEARTBEAT', currentApp: 'com.apple.Safari', appDisplayName: 'x'.repeat(129) });
       expect(ws.sent.some((m) => m.type === 'HEARTBEAT_ACK')).toBe(false);
+    });
+  });
+
+  describe('up-to-date check', () => {
+    const connectedNotices = () => slack.mock.calls.filter(([text]) => text.includes('device connected'));
+
+    it('compares a Mac with the macOS release asset and a PC with watchtower.exe', async () => {
+      const latest = vi.mocked(getLatestBinaryHash);
+      latest.mockClear();
+      vi.mocked(compareToLatest).mockReturnValue(false);
+
+      connect('kid-mac', 'macos').receive({ type: 'HEARTBEAT', currentApp: 'com.apple.Safari', binaryHash: 'a'.repeat(64) });
+      connect('kid-pc').receive({ type: 'HEARTBEAT', currentApp: 'chrome.exe', binaryHash: 'b'.repeat(64) });
+      await vi.waitFor(() => expect(connectedNotices()).toHaveLength(2));
+
+      expect(latest.mock.calls).toEqual([['macos'], ['windows']]);
+      const [mac, pc] = connectedNotices().map(([text]) => text);
+      expect(mac).toContain('kid-mac');
+      expect(mac).toContain('within ~6h');
+      expect(pc).toContain('kid-pc');
+      expect(pc).toContain('within ~30m');
+      vi.mocked(compareToLatest).mockReturnValue(null);
     });
   });
 });

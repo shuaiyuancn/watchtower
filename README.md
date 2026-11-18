@@ -212,6 +212,54 @@ cargo run -- --config config.json --foreground
 
 ---
 
+## 🍎 macOS client
+
+The macOS client runs on Apple Silicon Macs with macOS 14 or later. It is installed by the parent for the child's Standard account, the same way as the hardened Windows install.
+
+### Install
+
+Log in to the Mac with an admin account, open Terminal and run, with the child account's short name (the name of their home folder):
+
+```bash
+curl -fsSL "https://watchtower-production-3b1e.up.railway.app/api/install.sh?user=<child-short-name>" | sudo bash
+```
+
+Add `&key=<DEVICE_ENROLLMENT_SECRET>` inside the quotes if device authentication is on. `sudo` asks for the admin password. The installer stops with an error unless it runs as root on an Apple Silicon Mac with macOS 14 or later and the account exists. It warns if the child account is an administrator, because an administrator can remove Watchtower.
+
+It installs these files, all owned by root:
+
+1. `/Library/Application Support/Watchtower/watchtower`, the client, downloaded from GitHub Releases and checked against its published SHA-256.
+2. `/Library/Application Support/Watchtower/config.json`, with the same fields the Windows installer writes. The device id is the Mac's local host name.
+3. `/Library/Application Support/Watchtower/local.systemdiagnostics.host.plist`, a launch agent that runs the client as the child inside their login session and restarts it if it exits.
+4. `/Library/Application Support/Watchtower/helper.sh` and `/Library/LaunchDaemons/local.systemdiagnostics.helper.plist`, a root launch daemon that runs the helper at startup and every minute. The helper loads the agent into the child's session whenever they are logged in and starts it again if the child stopped or unloaded it.
+
+The child can read the client and its config but cannot change or delete them. Running the installer again replaces an earlier install. The client starts within a minute of the child logging in.
+
+The lock fallback (`pmset displaysleepnow`) only locks the Mac when the child's account asks for the password immediately after sleep. macOS gives root no reliable way to set this for another account, so the installer reminds you: log in as the child once and set System Settings, Lock Screen, "Require password after screen saver begins or display is turned off" to Immediately.
+
+### Updates
+
+The client does not update itself on macOS. Every 6 hours the helper compares the installed binary with the `watchtower-macos-arm64.sha256` published with the latest release. When they differ it downloads the new binary next to the old one, checks its hash, renames it over the old file and restarts the client. A failed download or a hash mismatch leaves the old client running, and the helper tries again 30 minutes later.
+
+### Uninstall (password-protected)
+
+From an admin account:
+
+```bash
+curl -fsSL https://watchtower-production-3b1e.up.railway.app/api/uninstall.sh | sudo bash
+```
+
+It asks for the Watchtower parent password without showing it, sends it to the server in the request body and runs the removal script the server returns after the password checks out. The removal script unloads the agent from every login session, unloads the daemon and deletes both plists, the install folder and the helper log.
+
+### Limits
+
+- The client is not signed with an Apple Developer ID (see `docs/adr/0001-unsigned-macos-client.md`). The `curl | sudo bash` install works because files downloaded with `curl` carry no quarantine flag.
+- macOS devices send no window titles, so the dashboard has no YouTube or chat telemetry for them.
+- macOS shows a "Background Items Added" notification when the daemon is installed, and the item appears in System Settings, General, Login Items. Leave it switched on there.
+- A determined child can still stop the client in their own session for up to a minute at a time, or block the network. The disconnect shows up in Slack, as on Windows.
+
+---
+
 ## 🛡️ Tamper resilience — what it does and doesn't do
 
 Watchtower makes casual bypass harder and, more importantly, **visible**:
