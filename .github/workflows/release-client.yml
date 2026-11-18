@@ -60,7 +60,7 @@ jobs:
   # build failure can never hold back the Windows release.
   build-and-release-macos:
     name: Build Native macOS Client (Apple Silicon)
-    runs-on: macos-14
+    runs-on: macos-latest
 
     steps:
       - name: Checkout Source Code
@@ -82,6 +82,8 @@ jobs:
 
       - name: Prepare Binary Artifacts
         run: |
+          # macos-latest is an Apple Silicon image; never publish another architecture under this name.
+          test "$(uname -m)" = "arm64"
           cp client/target/release/watchtower-client watchtower-macos-arm64
           chmod 755 watchtower-macos-arm64
           # Bare lowercase hex, which is what the macOS installer and helper read.
