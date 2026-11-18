@@ -72,7 +72,11 @@ async fn run_client() {
         }
     };
 
-    info!("🛡️ Starting Project Watchtower Windows 11 Client Daemon v0.1.0");
+    if platform::PLATFORM_NAME == "macos" {
+        info!("🛡️ Starting Project Watchtower macOS Client v{}", env!("CARGO_PKG_VERSION"));
+    } else {
+        info!("🛡️ Starting Project Watchtower Windows 11 Client Daemon v0.1.0");
+    }
 
     let explicit_config = args
         .iter()
@@ -91,8 +95,13 @@ async fn run_client() {
     // Initialize System Tray Icon
     platform::start_tray(client_config.device_id.clone());
 
-    // Periodic self-update from the published GitHub release.
-    if client_config.auto_update {
+    // Periodic self-update from the published GitHub release. Where the
+    // platform cannot replace its own binary (macOS: the install directory is
+    // root-owned and a root helper updates it), the loop does not run; the
+    // heartbeat still reports `autoUpdate` from config.
+    if !platform::SELF_UPDATE_SUPPORTED {
+        info!("[update] self-update is handled outside the client on this platform.");
+    } else if client_config.auto_update {
         let update_cfg = client_config.clone();
         tokio::spawn(async move {
             updater::run_update_loop(update_cfg).await;

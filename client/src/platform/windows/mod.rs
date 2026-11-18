@@ -15,14 +15,27 @@ pub use single_instance::acquire_single_instance;
 pub use tray::start_tray;
 pub use warning::show_warning;
 
-#[allow(dead_code)] // not sent to the server yet
 pub const PLATFORM_NAME: &str = "windows";
+
+/// What warnings call the device.
+pub const DEVICE_NOUN: &str = "PC";
 
 /// App identifier reported when the foreground app cannot be read.
 pub const UNKNOWN_APP_ID: &str = "unknown.exe";
 
 /// Windows can read window titles, so YouTube and IM telemetry is collected.
 pub const TELEMETRY_SUPPORTED: bool = true;
+
+/// The client replaces its own executable from the published release.
+pub const SELF_UPDATE_SUPPORTED: bool = true;
+
+/// LockWorkStation is trusted; lock requests are not verified or reported.
+pub const VERIFIES_LOCK: bool = false;
+
+/// Unused while VERIFIES_LOCK is false.
+pub fn lock_failure_reason() -> String {
+    "LockWorkStation did not lock the session".to_string()
+}
 
 /// Published release binary and its checksum file.
 pub const RELEASE_ASSET_URL: &str =

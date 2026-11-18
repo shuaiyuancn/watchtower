@@ -8,12 +8,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::info;
 
-#[allow(dead_code)] // not sent to the server yet
+/// Not a value the server accepts, so the client sends no platform.
 pub const PLATFORM_NAME: &str = "stub";
+
+pub const DEVICE_NOUN: &str = "PC";
 
 pub const UNKNOWN_APP_ID: &str = "unknown.exe";
 
 pub const TELEMETRY_SUPPORTED: bool = true;
+
+pub const SELF_UPDATE_SUPPORTED: bool = true;
+
+pub const VERIFIES_LOCK: bool = false;
+
+pub fn lock_failure_reason() -> String {
+    "[Mock] lock did not take effect".to_string()
+}
 
 pub const RELEASE_ASSET_URL: &str =
     "https://github.com/shuaiyuancn/watchtower/releases/latest/download/watchtower.exe";
