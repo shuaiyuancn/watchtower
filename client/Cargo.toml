@@ -3,7 +3,7 @@ name = "watchtower-client"
 version = "0.1.0"
 edition = "2021"
 authors = ["Watchtower"]
-description = "Windows 11 Screen Time Monitoring & Parental Control Daemon"
+description = "Watchtower screen time and parental control client for Windows and macOS"
 
 [dependencies]
 tokio = { version = "1.38", features = ["full"] }
@@ -35,6 +35,41 @@ windows = { version = "0.58", features = [
     "Win32_System_RemoteDesktop",
     "Win32_Security"
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSDate",
+    "NSEnumerator",
+    "NSGeometry",
+    "NSObjCRuntime",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "objc2-core-foundation",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "libc",
+    "objc2-core-foundation",
+    "NSApplication",
+    "NSColor",
+    "NSControl",
+    "NSEvent",
+    "NSFont",
+    "NSGraphics",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSText",
+    "NSTextField",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+] }
+libc = "0.2"
 
 [profile.release]
 opt-level = 3

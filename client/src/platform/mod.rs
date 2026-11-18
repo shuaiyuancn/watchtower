@@ -7,9 +7,16 @@
 //!
 //! Surface every platform module provides:
 //!
-//! - `PLATFORM_NAME: &str`
+//! - `PLATFORM_NAME: &str`: sent to the server when it is "windows" or "macos"
+//! - `DEVICE_NOUN: &str`: what the child calls the device in warnings ("PC", "Mac")
 //! - `UNKNOWN_APP_ID: &str`: app identifier used when the foreground app is unreadable
 //! - `TELEMETRY_SUPPORTED: bool`: whether window-title telemetry (YouTube, IM) runs
+//! - `SELF_UPDATE_SUPPORTED: bool`: whether the client runs its own update loop
+//!   (false where a privileged helper replaces the binary instead)
+//! - `VERIFIES_LOCK: bool`: whether lock requests are checked with `is_locked`
+//!   and reported to the server as LOCK_FAILED when they do not take effect
+//! - `fn lock_failure_reason() -> String`: which lock mechanism was last tried,
+//!   for the LOCK_FAILED report
 //! - `RELEASE_ASSET_URL`, `RELEASE_CHECKSUM_URL: &str`: self-update downloads
 //! - `UPDATE_NEW_EXTENSION`, `UPDATE_OLD_EXTENSION: &str`: self-update temp and backup files
 //! - `FALLBACK_DEVICE_ID: &str`: device ID when the hostname is unreadable
@@ -34,20 +41,25 @@ mod windows;
 #[cfg(windows)]
 pub use self::windows::*;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use self::macos::*;
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod stub;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use self::stub::*;
 
 /// The app in front of the child right now.
 #[derive(Debug, Clone)]
 pub struct ForegroundApp {
     /// Platform-specific app identifier (on Windows the executable name, e.g.
-    /// `chrome.exe`). Sent to the server as `currentApp`.
+    /// `chrome.exe`; on macOS the bundle identifier). Sent to the server as
+    /// `currentApp`.
     pub app_id: String,
     /// Human-readable app name, where the platform has one separate from the
-    /// app identifier. Windows does not; it is not sent to the server.
-    #[allow(dead_code)]
+    /// app identifier (macOS). Windows has none. Sent as `appDisplayName`.
     pub display_name: Option<String>,
     /// Title of the foreground window, or empty if unavailable.
     pub window_title: String,
