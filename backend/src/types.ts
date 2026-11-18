@@ -8,8 +8,17 @@ export type AppCategory =
   | 'System' 
   | 'Other';
 
+/**
+ * The operating system family a device runs. A device that reports none is
+ * Windows (installed Windows clients predate this field).
+ */
+export type Platform = 'windows' | 'macos';
+
 export interface AppRule {
-  executableName: string; // e.g. "RobloxPlayerBeta.exe" (case-insensitive)
+  // The app identifier, matched lowercased and exact: the executable name on
+  // Windows (e.g. "RobloxPlayerBeta.exe"), the bundle identifier on macOS
+  // (e.g. "com.roblox.RobloxPlayer"). The field name predates macOS support.
+  executableName: string;
   displayName: string;
   category: AppCategory;
   dailyLimitSeconds?: number; // custom override for this specific app
@@ -48,11 +57,21 @@ export interface DevicePolicy {
   bedtime: BedtimeSchedule;
   categoryLimits: CategoryLimit[];
   appRules: AppRule[];
+  // Device-reported platform. Optional in the type because policies stored
+  // before macOS support lack it; the store fills in 'windows' on load and
+  // on creation, so policies it returns always carry it. Server-owned: the
+  // dashboard cannot change it.
+  platform?: Platform;
+  // Lowercased app identifier -> display name, learned from heartbeats so the
+  // dashboard can label bundle identifiers readably. Display only, never
+  // matched by rules. Server-owned and capped (see store).
+  appDisplayNames?: Record<string, string>;
 }
 
 export interface ActiveSession {
   deviceId: string;
-  currentApp: string; // executable name e.g. "chrome.exe"
+  currentApp: string; // app identifier, e.g. "chrome.exe" or "com.google.Chrome"
+  appDisplayName?: string; // display name the client reported for currentApp (macOS)
   windowTitle: string;
   category: AppCategory;
   isIdle: boolean;
@@ -71,13 +90,13 @@ export interface DailyUsageSummary {
   deviceId: string;
   totalActiveSeconds: number;
   categorySeconds: Record<AppCategory, number>;
-  appSeconds: Record<string, number>; // executableName -> seconds
+  appSeconds: Record<string, number>; // lowercased app identifier -> seconds
 }
 
 export interface ClientHeartbeatPayload {
   deviceId: string;
   hostname: string;
-  currentApp: string;
+  currentApp: string; // app identifier
   windowTitle: string;
   isIdle: boolean;
   idleSeconds: number;
@@ -86,6 +105,8 @@ export interface ClientHeartbeatPayload {
   autoUpdate?: boolean; // whether the client has self-update enabled
   clientVersion?: string; // client build version (e.g. "0.1.0")
   binaryHash?: string; // SHA-256 of the running client binary
+  platform?: Platform; // validated platform from the heartbeat; absent = no information
+  appDisplayName?: string; // display name of currentApp (macOS clients); display only
 }
 
 export interface TelemetryEvent {

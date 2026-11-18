@@ -240,7 +240,10 @@ export function registerApiRoutes(
     const updated: DevicePolicy = {
       ...existing,
       ...(req.body || {}),
-      deviceId: req.params.id
+      deviceId: req.params.id,
+      // Reported by the device, not set by the dashboard.
+      platform: existing.platform,
+      appDisplayNames: existing.appDisplayNames
     };
 
     // Per-weekday curfews come from the client as free-form JSON: keep only

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { WatchtowerStore } from '../ledger/store.js';
+import { WatchtowerStore, MAX_APP_DISPLAY_NAMES } from '../ledger/store.js';
+import { DEFAULT_APP_RULES, MAC_DEFAULT_APP_RULES } from '../ledger/rules.js';
 import { ClientHeartbeatPayload } from '../types.js';
 
 describe('Watchtower SQLite Store', () => {
@@ -478,6 +479,167 @@ describe('Watchtower SQLite Store', () => {
       utcOffsetMinutes: 0
     });
     expect(result.policy.bonusSecondsToday).toBe(0);
+  });
+
+  describe('platform', () => {
+    const hb = (deviceId: string, extra: Partial<ClientHeartbeatPayload> = {}): ClientHeartbeatPayload => ({
+      deviceId,
+      hostname: deviceId,
+      currentApp: 'com.google.Chrome',
+      windowTitle: '',
+      isIdle: false,
+      idleSeconds: 0,
+      elapsedActiveDeltaSeconds: 3,
+      utcOffsetMinutes: 0,
+      ...extra
+    });
+
+    it('seeds a device that reports no platform as windows with the Windows rules', () => {
+      const policy = store.getPolicy('win-pc');
+      expect(policy.platform).toBe('windows');
+      expect(policy.appRules).toEqual(DEFAULT_APP_RULES);
+      // Seeded rules are copies of the defaults.
+      expect(policy.appRules[0]).not.toBe(DEFAULT_APP_RULES[0]);
+    });
+
+    it('seeds a new macOS device with the Mac rules', () => {
+      expect(store.reportPlatform('new-mac', 'macos')).toBe(true);
+      const policy = store.getPolicy('new-mac');
+      expect(policy.platform).toBe('macos');
+      expect(policy.appRules).toEqual(MAC_DEFAULT_APP_RULES);
+    });
+
+    it('seeds a new macOS device from its first heartbeat', () => {
+      const result = store.recordHeartbeat(hb('hb-mac', { platform: 'macos' }));
+      expect(result.policy.platform).toBe('macos');
+      expect(result.policy.appRules).toEqual(MAC_DEFAULT_APP_RULES);
+      expect(result.usage.categorySeconds['Browsers']).toBe(3);
+      expect(result.usage.appSeconds['com.google.chrome']).toBe(3);
+    });
+
+    it('defaults a stored policy without a platform to windows on load', () => {
+      const policy = store.getPolicy('legacy-pc');
+      delete policy.platform;
+      store.updatePolicy(policy);
+      store.close();
+
+      store = new WatchtowerStore(tempDir);
+      expect(store.getPolicy('legacy-pc').platform).toBe('windows');
+      expect(store.getAllDevices().find((d) => d.deviceId === 'legacy-pc')?.policy.platform).toBe('windows');
+    });
+
+    it('changes nothing when the platform is absent or unchanged', () => {
+      const policy = store.getPolicy('steady-pc');
+      expect(store.reportPlatform('steady-pc', undefined)).toBe(false);
+      expect(store.reportPlatform('steady-pc', 'windows')).toBe(false);
+      expect(store.getPolicy('steady-pc')).toBe(policy);
+      expect(policy.platform).toBe('windows');
+      // An absent platform never creates a policy either.
+      expect(store.reportPlatform('ghost', undefined)).toBe(false);
+      expect(store.getAllDevices().some((d) => d.deviceId === 'ghost')).toBe(false);
+    });
+
+    it('reseeds the rules on a platform change when they are untouched defaults', () => {
+      store.getPolicy('switcher');
+      expect(store.reportPlatform('switcher', 'macos')).toBe(true);
+      let policy = store.getPolicy('switcher');
+      expect(policy.platform).toBe('macos');
+      expect(policy.appRules).toEqual(MAC_DEFAULT_APP_RULES);
+
+      // And back again.
+      expect(store.reportPlatform('switcher', 'windows')).toBe(true);
+      policy = store.getPolicy('switcher');
+      expect(policy.platform).toBe('windows');
+      expect(policy.appRules).toEqual(DEFAULT_APP_RULES);
+
+      // Persisted.
+      store.close();
+      store = new WatchtowerStore(tempDir);
+      expect(store.getPolicy('switcher').platform).toBe('windows');
+    });
+
+    it('keeps edited rules on a platform change and only updates the platform', () => {
+      const policy = store.getPolicy('edited');
+      policy.appRules[0] = { ...policy.appRules[0], dailyLimitSeconds: 1800 };
+      store.updatePolicy(policy);
+      const before = JSON.parse(JSON.stringify(policy.appRules));
+
+      expect(store.reportPlatform('edited', 'macos')).toBe(true);
+      const after = store.getPolicy('edited');
+      expect(after.platform).toBe('macos');
+      expect(after.appRules).toEqual(before);
+    });
+
+    it('keeps rules changed through a category reassignment', () => {
+      store.getPolicy('recat');
+      store.reassignAppCategory('recat', 'chrome.exe', 'Education');
+      store.reportPlatform('recat', 'macos');
+      const policy = store.getPolicy('recat');
+      expect(policy.appRules.find((r) => r.executableName === 'chrome.exe')?.category).toBe('Education');
+      // The shared Windows defaults were not mutated by the reassignment.
+      expect(DEFAULT_APP_RULES.find((r) => r.executableName === 'chrome.exe')?.category).toBe('Browsers');
+    });
+
+    it('reports a platform change from a heartbeat as a policy change', () => {
+      store.recordHeartbeat(hb('hb-switch', { currentApp: 'chrome.exe' }));
+      const result = store.recordHeartbeat(hb('hb-switch', { platform: 'macos' }));
+      expect(result.policyChanged).toBe(true);
+      expect(result.policy.platform).toBe('macos');
+      expect(store.recordHeartbeat(hb('hb-switch', { platform: 'macos' })).policyChanged).toBe(false);
+    });
+  });
+
+  describe('display names', () => {
+    const hb = (deviceId: string, currentApp: string, appDisplayName?: string): ClientHeartbeatPayload => ({
+      deviceId,
+      hostname: deviceId,
+      currentApp,
+      appDisplayName,
+      platform: 'macos',
+      windowTitle: '',
+      isIdle: false,
+      idleSeconds: 0,
+      elapsedActiveDeltaSeconds: 3,
+      utcOffsetMinutes: 0
+    });
+
+    it('keeps the display name on the session and remembers it per identifier', () => {
+      const first = store.recordHeartbeat(hb('dn-mac', 'com.example.Game', 'Example Game'));
+      expect(first.policyChanged).toBe(true);
+      expect(store.getActiveSession('dn-mac')?.appDisplayName).toBe('Example Game');
+      expect(first.policy.appDisplayNames).toEqual({ 'com.example.game': 'Example Game' });
+
+      // Same label again: no policy write.
+      expect(store.recordHeartbeat(hb('dn-mac', 'com.example.Game', 'Example Game')).policyChanged).toBe(false);
+
+      // No label: the session drops it, the remembered label stays.
+      store.recordHeartbeat(hb('dn-mac', 'com.example.Game'));
+      expect(store.getActiveSession('dn-mac')?.appDisplayName).toBeUndefined();
+      expect(store.getPolicy('dn-mac').appDisplayNames?.['com.example.game']).toBe('Example Game');
+    });
+
+    it('never matches rules on the display name', () => {
+      // "Google Chrome" is a display name, not an identifier: no Browsers match.
+      const result = store.recordHeartbeat(hb('dn-rules', 'com.example.unknown', 'Google Chrome'));
+      expect(store.getActiveSession('dn-rules')?.category).toBe('Other');
+      expect(result.usage.appSeconds['com.example.unknown']).toBe(3);
+    });
+
+    it('caps remembered labels per device', () => {
+      for (let i = 0; i < MAX_APP_DISPLAY_NAMES + 5; i++) {
+        store.recordHeartbeat(hb('dn-cap', `com.example.app${i}`, `App ${i}`));
+      }
+      const names = store.getPolicy('dn-cap').appDisplayNames || {};
+      expect(Object.keys(names).length).toBe(MAX_APP_DISPLAY_NAMES);
+      expect(names['com.example.app0']).toBeUndefined();
+      expect(names[`com.example.app${MAX_APP_DISPLAY_NAMES + 4}`]).toBe(`App ${MAX_APP_DISPLAY_NAMES + 4}`);
+    });
+
+    it('labels a reassigned app with its remembered display name', () => {
+      store.recordHeartbeat(hb('dn-recat', 'com.example.Game', 'Example Game'));
+      const policy = store.reassignAppCategory('dn-recat', 'com.example.Game', 'Games');
+      expect(policy.appRules.find((r) => r.executableName === 'com.example.Game')?.displayName).toBe('Example Game');
+    });
   });
 });
 

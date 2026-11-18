@@ -33,7 +33,10 @@ import {
   X
 } from 'lucide-react';
 
+type Platform = 'windows' | 'macos';
+
 interface AppRule {
+  // App identifier: executable name on Windows, bundle identifier on macOS.
   executableName: string;
   displayName: string;
   category: string;
@@ -70,11 +73,14 @@ interface DevicePolicy {
   bedtime: BedtimeSchedule;
   categoryLimits: CategoryLimit[];
   appRules: AppRule[];
+  platform?: Platform; // reported by the device; absent means Windows
+  appDisplayNames?: Record<string, string>; // lowercased app identifier -> display name
 }
 
 interface ActiveSession {
   deviceId: string;
   currentApp: string;
+  appDisplayName?: string;
   windowTitle: string;
   category: string;
   isIdle: boolean;
@@ -537,7 +543,20 @@ export default function App() {
     }
   };
 
-  const formatSeconds = (sec: number) => {
+  // A device that reports no platform is Windows.
+  const isMac = currentDevice.policy?.platform === 'macos';
+
+  // Readable label for an app identifier: the display name the device
+  // reported for it (macOS clients send these), else the identifier itself.
+  const appLabel = (app: string): string => {
+    const norm = app.trim().toLowerCase();
+    if (currentDevice.session?.appDisplayName && currentDevice.session.currentApp.trim().toLowerCase() === norm) {
+      return currentDevice.session.appDisplayName;
+    }
+    return currentDevice.policy?.appDisplayNames?.[norm] || app;
+  };
+
+  const formatSeconds =(sec: number) => {
     if (sec >= 86400) {
       return '24h (Unlimited)';
     }
@@ -617,7 +636,7 @@ export default function App() {
         body: JSON.stringify({ locked: newLockState })
       });
       if (res.ok) {
-        showNotification(newLockState ? '🚨 PC Locked Immediately' : '🔓 PC Unlocked');
+        showNotification(newLockState ? '🚨 Device Locked Immediately' : '🔓 Device Unlocked');
       }
     } catch (e) {
       console.error(e);
@@ -722,10 +741,13 @@ export default function App() {
 
   const handleAddAppRule = () => {
     if (!newAppExe.trim()) return;
-    const cleanExe = newAppExe.trim().endsWith('.exe') ? newAppExe.trim() : `${newAppExe.trim()}.exe`;
+    const typed = newAppExe.trim();
+    // Windows rules match an executable name, so ".exe" is implied. macOS
+    // rules match a bundle identifier, which is used as typed.
+    const cleanExe = isMac || typed.toLowerCase().endsWith('.exe') ? typed : `${typed}.exe`;
     const newRule: AppRule = {
       executableName: cleanExe,
-      displayName: newAppDisplayName.trim() || cleanExe,
+      displayName: newAppDisplayName.trim() || appLabel(cleanExe),
       category: newAppCategory,
       dailyLimitSeconds: newAppLimitMinutes ? Number(newAppLimitMinutes) * 60 : undefined
     };
@@ -1129,8 +1151,8 @@ export default function App() {
               ) : (
                 <>
                   <Unlock className="w-4 h-4 text-emerald-600" />
-                  <span className="hidden sm:inline">Lock PC Now</span>
-                  <span className="sm:hidden">Lock PC</span>
+                  <span className="hidden sm:inline">Lock Device Now</span>
+                  <span className="sm:hidden">Lock Device</span>
                 </>
               )}
             </button>
@@ -1208,6 +1230,12 @@ export default function App() {
                     }`}>
                       {currentDevice.session?.connected ? 'Online' : 'Offline / Standby'}
                     </span>
+                    <span
+                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200"
+                      title="Platform reported by the device"
+                    >
+                      {isMac ? 'macOS' : 'Windows'}
+                    </span>
                     {currentDevice.session?.isIdle && (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 border border-amber-500/20">
                         Idle ({Math.floor((currentDevice.session.idleSeconds || 0) / 60)}m)
@@ -1225,7 +1253,9 @@ export default function App() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="text-lg font-bold text-slate-900">
-                            {currentDevice.session?.currentApp || 'No active app reported yet'}
+                            {currentDevice.session?.currentApp
+                              ? appLabel(currentDevice.session.currentApp)
+                              : 'No active app reported yet'}
                           </h3>
                           {currentDevice.session?.category && (
                             <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300">
@@ -1233,6 +1263,9 @@ export default function App() {
                             </span>
                           )}
                         </div>
+                        {currentDevice.session?.currentApp && appLabel(currentDevice.session.currentApp) !== currentDevice.session.currentApp && (
+                          <p className="text-xs font-mono text-slate-500 mt-0.5">{currentDevice.session.currentApp}</p>
+                        )}
                         <p className="text-sm text-slate-500 line-clamp-2 mt-1">
                           {currentDevice.session?.windowTitle || 'Client waiting for active user session...'}
                         </p>
@@ -1464,7 +1497,7 @@ export default function App() {
                 <div>
                   <div className="text-xs text-slate-500 font-medium">Top App Used</div>
                   <div className="text-xl font-bold text-slate-900 mt-0.5 truncate max-w-[150px]">
-                    {topApp ? topApp[0] : 'None'}
+                    {topApp ? appLabel(topApp[0]) : 'None'}
                   </div>
                 </div>
               </div>
@@ -1641,7 +1674,7 @@ export default function App() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0 font-semibold text-slate-900">
                           {getCategoryIcon(log.category)}
-                          <span className="truncate">{log.app}</span>
+                          <span className="truncate" title={log.app}>{appLabel(log.app)}</span>
                         </div>
                         <span className="font-mono text-blue-600 font-medium text-sm whitespace-nowrap">{formatSeconds(log.durationSeconds)}</span>
                       </div>
@@ -1697,7 +1730,7 @@ export default function App() {
                           <td className="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               {getCategoryIcon(log.category)}
-                              <span>{log.app}</span>
+                              <span title={log.app}>{appLabel(log.app)}</span>
                             </div>
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
@@ -2006,7 +2039,7 @@ export default function App() {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-800">Bedtime Curfew Lockout</h3>
-                  <p className="text-xs text-slate-500">Forces immediate logoff during sleeping hours.</p>
+                  <p className="text-xs text-slate-500">Locks the device during sleeping hours.</p>
                 </div>
                 <input
                   type="checkbox"
@@ -2028,7 +2061,7 @@ export default function App() {
               {currentDevice.policy.bedtime?.enabled && (
                 <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-200">
                   <div>
-                    <label className="block text-xs text-slate-500 mb-1">Curfew Start (Lock PC)</label>
+                    <label className="block text-xs text-slate-500 mb-1">Curfew Start (Lock Device)</label>
                     <input
                       type="time"
                       value={`${String(currentDevice.policy.bedtime.startHour).padStart(2, '0')}:${String(currentDevice.policy.bedtime.startMinute).padStart(2, '0')}`}
@@ -2048,7 +2081,7 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 mb-1">Curfew End (Unlock PC)</label>
+                    <label className="block text-xs text-slate-500 mb-1">Curfew End (Unlock Device)</label>
                     <input
                       type="time"
                       value={`${String(currentDevice.policy.bedtime.endHour).padStart(2, '0')}:${String(currentDevice.policy.bedtime.endMinute).padStart(2, '0')}`}
@@ -2210,17 +2243,19 @@ export default function App() {
                 <Settings className="w-5 h-5 text-blue-600" /> Application Rules & Limits
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                Customize limits or permanently block specific executable files (.exe).
+                {isMac
+                  ? 'Customize limits or permanently block specific apps. Rules match the bundle identifier (for example com.google.Chrome), not the app name.'
+                  : 'Customize limits or permanently block specific executable files (.exe).'}
               </p>
             </div>
 
             {/* Add App Form */}
             <div className="p-4 bg-slate-200/70 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block text-xs text-slate-500 mb-1">Executable Name</label>
+                <label className="block text-xs text-slate-500 mb-1">{isMac ? 'Bundle Identifier' : 'Executable Name'}</label>
                 <input
                   type="text"
-                  placeholder="e.g. RobloxPlayerBeta.exe"
+                  placeholder={isMac ? 'e.g. com.roblox.RobloxPlayer' : 'e.g. RobloxPlayerBeta.exe'}
                   value={newAppExe}
                   onChange={(e) => setNewAppExe(e.target.value)}
                   className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900"
@@ -2277,7 +2312,7 @@ export default function App() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-200/80 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3">Executable</th>
+                    <th className="px-4 py-3">{isMac ? 'Bundle ID' : 'Executable'}</th>
                     <th className="px-4 py-3">Display Name</th>
                     <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3">Daily Limit</th>
@@ -2324,7 +2359,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-300 py-4 text-center text-xs text-slate-600">
-        Project Watchtower • Windows 11 Screen Time & Parental Control Platform
+        Project Watchtower • Screen Time & Parental Control Platform
       </footer>
     </div>
   );
