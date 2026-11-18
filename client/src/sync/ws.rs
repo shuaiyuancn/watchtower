@@ -246,7 +246,16 @@ fn request_lock(verifier: &mut LockVerifier) -> Option<String> {
         return None;
     }
 
+    // The server repeats the request every heartbeat while a limit holds. Do
+    // not lock again when the device is already locked: `is_locked` is also
+    // true while the child's session is in the background, and locking then
+    // would lock the session of whoever is at the Mac (a parent in their own
+    // account), or blank the display under them with the pmset fallback.
     let was_locked = platform::is_locked();
+    if was_locked {
+        verifier.on_lock_request(std::time::Instant::now(), true);
+        return None;
+    }
     let requested = platform::lock_device();
     if !verifier.on_lock_request(std::time::Instant::now(), was_locked) {
         return None;
