@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+use crate::platform;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_url: String, // e.g. "ws://127.0.0.1:4000/ws/client" or "wss://your-railway.up.railway.app/ws/client"
@@ -37,7 +39,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "windows-pc".to_string());
+            .unwrap_or_else(|_| platform::FALLBACK_DEVICE_ID.to_string());
 
         Self {
             server_url: "ws://127.0.0.1:4000/ws/client".to_string(),
@@ -79,9 +81,10 @@ pub fn load_or_create_config(explicit_path: Option<&str>) -> ClientConfig {
         }
     }
 
-    // 3. Check %LOCALAPPDATA%\Watchtower\config.json
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let p = Path::new(&local_app_data).join("Watchtower").join("config.json");
+    // 3. Check the platform's config locations (on Windows
+    //    %LOCALAPPDATA%\Watchtower\config.json, then
+    //    C:\ProgramData\Watchtower\config.json)
+    for p in platform::config_search_paths() {
         if p.exists() {
             if let Ok(content) = fs::read_to_string(&p) {
                 if let Ok(config) = serde_json::from_str::<ClientConfig>(&content) {
@@ -91,17 +94,7 @@ pub fn load_or_create_config(explicit_path: Option<&str>) -> ClientConfig {
         }
     }
 
-    // 4. Check C:\ProgramData\Watchtower\config.json
-    let prog_data = Path::new("C:\\ProgramData\\Watchtower\\config.json");
-    if prog_data.exists() {
-        if let Ok(content) = fs::read_to_string(prog_data) {
-            if let Ok(config) = serde_json::from_str::<ClientConfig>(&content) {
-                return config;
-            }
-        }
-    }
-
-    // 5. Fallback: create default in working dir or target path
+    // 4. Fallback: create default in working dir or target path
     let default_config = ClientConfig::default();
     let target_path = explicit_path.unwrap_or("config.json");
     if let Ok(serialized) = serde_json::to_string_pretty(&default_config) {
